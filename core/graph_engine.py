@@ -605,17 +605,35 @@ class AttackSurfaceGraph:
                 }
               },
               "physics": {
-                "forceAtlas2Based": {
-                  "gravitationalConstant": -100,
-                  "centralGravity": 0.005,
-                  "springLength": 230,
-                  "springConstant": 0.18,
+                "hierarchicalRepulsion": {
+                  "centralGravity": 0.0,
+                  "springLength": 150,
+                  "springConstant": 0.01,
+                  "nodeDistance": 180,
+                  "damping": 0.09,
                   "avoidOverlap": 1
                 },
                 "maxVelocity": 50,
-                "solver": "forceAtlas2Based",
-                "timestep": 0.35,
-                "stabilization": { "iterations": 150 }
+                "solver": "hierarchicalRepulsion",
+                "timestep": 0.5,
+                "stabilization": { 
+                  "enabled": true,
+                  "iterations": 200,
+                  "updateInterval": 25
+                }
+              },
+              "layout": {
+                "hierarchical": {
+                  "enabled": true,
+                  "levelSeparation": 200,
+                  "nodeSpacing": 150,
+                  "treeSpacing": 250,
+                  "blockShifting": true,
+                  "edgeMinimization": true,
+                  "parentCentralization": true,
+                  "direction": "UD",
+                  "sortMethod": "directed"
+                }
               },
               "interaction": {
                 "hover": true,
@@ -829,6 +847,39 @@ class AttackSurfaceGraph:
             <div style="margin-top: 10px; padding-top: 8px; border-top: 1px solid #45475a; font-size: 11px; color: #6c7086;">
                 <span id="visibleCount">All nodes visible</span>
             </div>
+            
+            <!-- Layout Toggle Section -->
+            <div style="margin-top: 12px; padding-top: 10px; border-top: 1px solid #45475a;">
+                <div style="font-weight: bold; margin-bottom: 8px; font-size: 12px;">📐 Layout Mode</div>
+                <div style="display: flex; gap: 6px;">
+                    <button id="btn-hierarchical" onclick="setLayout('hierarchical')" style="
+                        flex: 1;
+                        padding: 6px 8px;
+                        background: #3b82f6;
+                        color: white;
+                        border: none;
+                        border-radius: 4px;
+                        cursor: pointer;
+                        font-size: 11px;
+                        transition: all 0.2s;
+                    ">
+                        🌳 Tree
+                    </button>
+                    <button id="btn-force" onclick="setLayout('force')" style="
+                        flex: 1;
+                        padding: 6px 8px;
+                        background: #45475a;
+                        color: #cdd6f4;
+                        border: none;
+                        border-radius: 4px;
+                        cursor: pointer;
+                        font-size: 11px;
+                        transition: all 0.2s;
+                    ">
+                        🕸️ Force
+                    </button>
+                </div>
+            </div>
         </div>
         
         <style>
@@ -924,6 +975,87 @@ class AttackSurfaceGraph:
                 var checkboxes = document.querySelectorAll('#filterSidebar input[type="checkbox"]');
                 checkboxes.forEach(function(cb) { cb.checked = false; });
                 filterNodes();
+            }
+            
+            // Layout configurations
+            var hierarchicalLayout = {
+                physics: {
+                    hierarchicalRepulsion: {
+                        centralGravity: 0.0,
+                        springLength: 150,
+                        springConstant: 0.01,
+                        nodeDistance: 180,
+                        damping: 0.09,
+                        avoidOverlap: 1
+                    },
+                    maxVelocity: 50,
+                    solver: 'hierarchicalRepulsion',
+                    timestep: 0.5,
+                    stabilization: { enabled: true, iterations: 200, updateInterval: 25 }
+                },
+                layout: {
+                    hierarchical: {
+                        enabled: true,
+                        levelSeparation: 200,
+                        nodeSpacing: 150,
+                        treeSpacing: 250,
+                        blockShifting: true,
+                        edgeMinimization: true,
+                        parentCentralization: true,
+                        direction: 'UD',
+                        sortMethod: 'directed'
+                    }
+                }
+            };
+            
+            var forceLayout = {
+                physics: {
+                    forceAtlas2Based: {
+                        gravitationalConstant: -80,
+                        centralGravity: 0.01,
+                        springLength: 200,
+                        springConstant: 0.08,
+                        avoidOverlap: 0.8
+                    },
+                    maxVelocity: 50,
+                    solver: 'forceAtlas2Based',
+                    timestep: 0.35,
+                    stabilization: { enabled: true, iterations: 150, updateInterval: 25 }
+                },
+                layout: {
+                    hierarchical: {
+                        enabled: false
+                    }
+                }
+            };
+            
+            var currentLayout = 'hierarchical';
+            
+            // Switch layout mode
+            function setLayout(mode) {
+                if (!network) return;
+                
+                currentLayout = mode;
+                
+                var btnHierarchical = document.getElementById('btn-hierarchical');
+                var btnForce = document.getElementById('btn-force');
+                
+                if (mode === 'hierarchical') {
+                    network.setOptions(hierarchicalLayout);
+                    btnHierarchical.style.background = '#3b82f6';
+                    btnHierarchical.style.color = 'white';
+                    btnForce.style.background = '#45475a';
+                    btnForce.style.color = '#cdd6f4';
+                } else {
+                    network.setOptions(forceLayout);
+                    btnForce.style.background = '#3b82f6';
+                    btnForce.style.color = 'white';
+                    btnHierarchical.style.background = '#45475a';
+                    btnHierarchical.style.color = '#cdd6f4';
+                }
+                
+                // Re-stabilize the network
+                network.stabilize(150);
             }
         </script>
         '''

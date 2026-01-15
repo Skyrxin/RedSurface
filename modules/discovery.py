@@ -207,6 +207,7 @@ class InfrastructureDiscoverer:
         dns_servers: Optional[List[str]] = None,
         use_crtsh: bool = True,
         analyze_ssl: bool = True,
+        use_system_dns: bool = False,
     ) -> None:
         """
         Initialize the infrastructure discoverer.
@@ -218,21 +219,30 @@ class InfrastructureDiscoverer:
             dns_servers: Custom DNS servers (default: public DNS servers)
             use_crtsh: Enable crt.sh subdomain discovery
             analyze_ssl: Enable SSL certificate analysis
+            use_system_dns: Use system default DNS instead of public DNS servers
         """
         self.wordlist = wordlist or COMMON_SUBDOMAINS
         self.timeout = timeout
         self.max_concurrent = max_concurrent
-        self.dns_servers = dns_servers or self.PUBLIC_DNS_SERVERS
+        self.use_system_dns = use_system_dns
+        # Use system DNS or provided/public DNS servers
+        if use_system_dns:
+            self.dns_servers = None  # Will use system default
+        else:
+            self.dns_servers = dns_servers or self.PUBLIC_DNS_SERVERS
         self.use_crtsh = use_crtsh
         self.analyze_ssl = analyze_ssl
         self.logger = get_logger()
         self._resolver: Optional[dns.asyncresolver.Resolver] = None
 
     def _get_resolver(self) -> dns.asyncresolver.Resolver:
-        """Get or create the async DNS resolver with public DNS servers."""
+        """Get or create the async DNS resolver."""
         if self._resolver is None:
             self._resolver = dns.asyncresolver.Resolver()
-            self._resolver.nameservers = self.dns_servers
+            # Only set custom nameservers if not using system DNS
+            if self.dns_servers:
+                self._resolver.nameservers = self.dns_servers
+            # If dns_servers is None, it will use system default from /etc/resolv.conf
             self._resolver.timeout = self.timeout
             self._resolver.lifetime = self.timeout * 2
         return self._resolver

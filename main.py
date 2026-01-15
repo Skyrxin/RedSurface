@@ -143,6 +143,12 @@ Examples:
         help="Skip HTML/JS content analysis during fingerprinting",
     )
 
+    parser.add_argument(
+        "--use-system-dns",
+        action="store_true",
+        help="Use system default DNS instead of public DNS servers (8.8.8.8, 1.1.1.1)",
+    )
+
     return parser.parse_args()
 
 
@@ -389,6 +395,7 @@ async def run_reconnaissance(
     nvd_key: str | None = None,
     use_nvd: bool = True,
     analyze_content: bool = True,
+    use_system_dns: bool = False,
 ) -> AttackSurfaceGraph:
     """
     Main reconnaissance orchestration function.
@@ -406,6 +413,7 @@ async def run_reconnaissance(
         nvd_key: Optional NVD API key for CVE lookups
         use_nvd: Whether to use real NVD API
         analyze_content: Whether to analyze HTML/JS content
+        use_system_dns: Use system default DNS instead of public DNS
 
     Returns:
         Populated AttackSurfaceGraph instance
@@ -421,6 +429,7 @@ async def run_reconnaissance(
     discoverer = InfrastructureDiscoverer(
         timeout=3.0,
         max_concurrent=50,
+        use_system_dns=use_system_dns,
     )
     fingerprinter = TechFingerprinter(
         timeout=10.0,
@@ -517,6 +526,7 @@ def main() -> int:
                 nvd_key=args.nvd_key,
                 use_nvd=not args.no_nvd,
                 analyze_content=not args.no_content_analysis,
+                use_system_dns=args.use_system_dns,
             )
         )
     except KeyboardInterrupt:
