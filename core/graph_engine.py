@@ -12,7 +12,7 @@ from pyvis.network import Network
 from utils.logger import get_logger
 
 
-# Node type color scheme
+# Node type color scheme (must match group colors in export_html options)
 NODE_COLORS: Dict[str, str] = {
     "Domain": "#6366f1",        # Indigo - Root domain
     "Subdomain": "#8b5cf6",     # Purple - Subdomains
@@ -21,8 +21,8 @@ NODE_COLORS: Dict[str, str] = {
     "CloudService": "#fb923c",  # Light Orange - Cloud provider
     "Technology": "#3b82f6",    # Blue - Technologies
     "Vulnerability": "#ef4444", # Red - Vulnerabilities
-    "Email": "#ffd700",         # Gold - Email addresses
-    "Person": "#ffc0cb",        # Pink - People
+    "Email": "#eab308",         # Yellow - Email addresses
+    "Person": "#ec4899",        # Pink - People
 }
 
 # Node type shapes
@@ -505,6 +505,7 @@ class AttackSurfaceGraph:
     ) -> Path:
         """
         Export the graph to an interactive HTML file using PyVis.
+        Uses BloodHound-style forceAtlas2Based layout for clean visualization.
 
         Args:
             filename: Output filename (will add .html if not present)
@@ -531,65 +532,107 @@ class AttackSurfaceGraph:
             font_color="#cdd6f4",  # Light text
         )
 
-        # Configure physics
+        # Configure BloodHound-style physics layout
         if physics:
-            net.set_options("""
-            {
-                "physics": {
-                    "enabled": true,
-                    "forceAtlas2Based": {
-                        "gravitationalConstant": -50,
-                        "centralGravity": 0.01,
-                        "springLength": 150,
-                        "springConstant": 0.08,
-                        "damping": 0.4
-                    },
-                    "solver": "forceAtlas2Based",
-                    "stabilization": {
-                        "enabled": true,
-                        "iterations": 200,
-                        "updateInterval": 25
-                    }
+            options = """
+            var options = {
+              "groups": {
+                "Domain": {
+                  "color": { "background": "#6366f1", "border": "#4f46e5", "highlight": { "background": "#818cf8", "border": "#4f46e5" } },
+                  "shape": "diamond",
+                  "font": { "color": "#cdd6f4" }
                 },
-                "nodes": {
-                    "font": {
-                        "size": 14,
-                        "color": "#cdd6f4"
-                    },
-                    "borderWidth": 2,
-                    "borderWidthSelected": 4
+                "Subdomain": {
+                  "color": { "background": "#8b5cf6", "border": "#7c3aed", "highlight": { "background": "#a78bfa", "border": "#7c3aed" } },
+                  "shape": "dot",
+                  "font": { "color": "#cdd6f4" }
                 },
-                "edges": {
-                    "font": {
-                        "size": 10,
-                        "color": "#6c7086",
-                        "align": "middle"
-                    },
-                    "smooth": {
-                        "type": "curvedCW",
-                        "roundness": 0.2
-                    },
-                    "arrows": {
-                        "to": {
-                            "enabled": true,
-                            "scaleFactor": 0.5
-                        }
-                    }
+                "IP": {
+                  "color": { "background": "#22c55e", "border": "#16a34a", "highlight": { "background": "#4ade80", "border": "#16a34a" } },
+                  "shape": "dot",
+                  "font": { "color": "#cdd6f4" }
                 },
-                "interaction": {
-                    "hover": true,
-                    "tooltipDelay": 200,
-                    "hideEdgesOnDrag": true,
-                    "navigationButtons": true,
-                    "keyboard": {
-                        "enabled": true
-                    }
+                "IP_Cloud": {
+                  "color": { "background": "#f97316", "border": "#ea580c", "highlight": { "background": "#fb923c", "border": "#ea580c" } },
+                  "shape": "dot",
+                  "font": { "color": "#cdd6f4" }
+                },
+                "CloudService": {
+                  "color": { "background": "#fb923c", "border": "#f97316", "highlight": { "background": "#fdba74", "border": "#f97316" } },
+                  "shape": "box",
+                  "font": { "color": "#1e1e2e" }
+                },
+                "Technology": {
+                  "color": { "background": "#3b82f6", "border": "#2563eb", "highlight": { "background": "#60a5fa", "border": "#2563eb" } },
+                  "shape": "box",
+                  "font": { "color": "#ffffff" }
+                },
+                "Vulnerability": {
+                  "color": { "background": "#ef4444", "border": "#dc2626", "highlight": { "background": "#f87171", "border": "#dc2626" } },
+                  "shape": "triangle",
+                  "font": { "color": "#cdd6f4" }
+                },
+                "Email": {
+                  "color": { "background": "#eab308", "border": "#ca8a04", "highlight": { "background": "#facc15", "border": "#ca8a04" } },
+                  "shape": "box",
+                  "font": { "color": "#1e1e2e" }
+                },
+                "Person": {
+                  "color": { "background": "#ec4899", "border": "#db2777", "highlight": { "background": "#f472b6", "border": "#db2777" } },
+                  "shape": "ellipse",
+                  "font": { "color": "#cdd6f4" }
                 }
+              },
+              "nodes": {
+                "font": { "size": 16, "strokeWidth": 2, "color": "#cdd6f4" },
+                "scaling": { "min": 10, "max": 30 },
+                "borderWidth": 2,
+                "borderWidthSelected": 4
+              },
+              "edges": {
+                "color": { "inherit": false },
+                "smooth": { "type": "continuous", "forceDirection": "none" },
+                "font": {
+                  "size": 10,
+                  "color": "#6c7086",
+                  "align": "middle"
+                },
+                "arrows": {
+                  "to": {
+                    "enabled": true,
+                    "scaleFactor": 0.5
+                  }
+                }
+              },
+              "physics": {
+                "forceAtlas2Based": {
+                  "gravitationalConstant": -100,
+                  "centralGravity": 0.005,
+                  "springLength": 230,
+                  "springConstant": 0.18,
+                  "avoidOverlap": 1
+                },
+                "maxVelocity": 50,
+                "solver": "forceAtlas2Based",
+                "timestep": 0.35,
+                "stabilization": { "iterations": 150 }
+              },
+              "interaction": {
+                "hover": true,
+                "tooltipDelay": 200,
+                "hideEdgesOnDrag": true,
+                "navigationButtons": true,
+                "keyboard": {
+                  "enabled": true
+                }
+              }
             }
-            """)
+            """
+            net.set_options(options)
 
-        # Add nodes from NetworkX graph
+        # Add nodes from NetworkX graph with group attribute for filtering
         for node, data in self.graph.nodes(data=True):
+            node_type = data.get("node_type", "Unknown")
             net.add_node(
                 node,
                 label=data.get("label", node),
@@ -597,6 +640,7 @@ class AttackSurfaceGraph:
                 color=data.get("color", "#94a3b8"),
                 shape=data.get("shape", "dot"),
                 size=data.get("size", 20),
+                group=node_type,  # Add group for filtering
             )
 
         # Add edges from NetworkX graph
@@ -616,6 +660,9 @@ class AttackSurfaceGraph:
 
         # Inject custom legend into the HTML
         self._inject_legend(filepath, legend_html)
+        
+        # Inject custom filter sidebar JavaScript
+        self._inject_custom_javascript(filepath)
 
         self.logger.info(f"Graph exported to: {filepath}")
         return filepath
@@ -626,9 +673,11 @@ class AttackSurfaceGraph:
             ("Domain", NODE_COLORS["Domain"], "◆"),
             ("Subdomain", NODE_COLORS["Subdomain"], "●"),
             ("IP", NODE_COLORS["IP"], "●"),
-            ("Cloud IP", NODE_COLORS["IP_Cloud"], "●"),
+            ("Cloud", NODE_COLORS["CloudService"], "■"),
             ("Technology", NODE_COLORS["Technology"], "■"),
             ("Vulnerability", NODE_COLORS["Vulnerability"], "▲"),
+            ("Email", NODE_COLORS["Email"], "■"),
+            ("Person", NODE_COLORS["Person"], "●"),
         ]
 
         items_html = ""
@@ -674,6 +723,222 @@ class AttackSurfaceGraph:
             filepath.write_text(content, encoding="utf-8")
         except Exception as e:
             self.logger.warning(f"Could not inject legend: {e}")
+
+    def _inject_custom_javascript(self, filepath: Path) -> None:
+        """
+        Inject custom filter sidebar JavaScript into the generated HTML.
+        Provides BloodHound-style node type filtering.
+        
+        Args:
+            filepath: Path to the HTML file to modify
+        """
+        # Filter sidebar HTML/CSS
+        filter_sidebar_html = '''
+        <!-- Filter Sidebar -->
+        <div id="filterSidebar" style="
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(30, 30, 46, 0.95);
+            border: 1px solid #45475a;
+            border-radius: 8px;
+            padding: 15px;
+            color: #cdd6f4;
+            font-family: 'Segoe UI', sans-serif;
+            font-size: 13px;
+            z-index: 1000;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+            min-width: 180px;
+        ">
+            <div style="font-weight: bold; margin-bottom: 12px; border-bottom: 1px solid #45475a; padding-bottom: 8px; display: flex; align-items: center;">
+                <span style="margin-right: 8px;">🔍</span> Filter Nodes
+            </div>
+            
+            <div class="filter-group" style="display: flex; flex-direction: column; gap: 8px;">
+                <label class="filter-item" style="display: flex; align-items: center; cursor: pointer; padding: 4px 8px; border-radius: 4px; transition: background 0.2s;">
+                    <input type="checkbox" id="filter-Domain" checked onchange="filterNodes()" style="margin-right: 10px; cursor: pointer;">
+                    <span style="color: #6366f1; margin-right: 6px;">◆</span> Domain
+                </label>
+                
+                <label class="filter-item" style="display: flex; align-items: center; cursor: pointer; padding: 4px 8px; border-radius: 4px; transition: background 0.2s;">
+                    <input type="checkbox" id="filter-Subdomain" checked onchange="filterNodes()" style="margin-right: 10px; cursor: pointer;">
+                    <span style="color: #8b5cf6; margin-right: 6px;">●</span> Subdomain
+                </label>
+                
+                <label class="filter-item" style="display: flex; align-items: center; cursor: pointer; padding: 4px 8px; border-radius: 4px; transition: background 0.2s;">
+                    <input type="checkbox" id="filter-IP" checked onchange="filterNodes()" style="margin-right: 10px; cursor: pointer;">
+                    <span style="color: #22c55e; margin-right: 6px;">●</span> IP
+                </label>
+                
+                <label class="filter-item" style="display: flex; align-items: center; cursor: pointer; padding: 4px 8px; border-radius: 4px; transition: background 0.2s;">
+                    <input type="checkbox" id="filter-CloudService" checked onchange="filterNodes()" style="margin-right: 10px; cursor: pointer;">
+                    <span style="color: #fb923c; margin-right: 6px;">■</span> Cloud
+                </label>
+                
+                <label class="filter-item" style="display: flex; align-items: center; cursor: pointer; padding: 4px 8px; border-radius: 4px; transition: background 0.2s;">
+                    <input type="checkbox" id="filter-Technology" checked onchange="filterNodes()" style="margin-right: 10px; cursor: pointer;">
+                    <span style="color: #3b82f6; margin-right: 6px;">■</span> Technology
+                </label>
+                
+                <label class="filter-item" style="display: flex; align-items: center; cursor: pointer; padding: 4px 8px; border-radius: 4px; transition: background 0.2s;">
+                    <input type="checkbox" id="filter-Vulnerability" checked onchange="filterNodes()" style="margin-right: 10px; cursor: pointer;">
+                    <span style="color: #ef4444; margin-right: 6px;">▲</span> Vulnerability
+                </label>
+                
+                <label class="filter-item" style="display: flex; align-items: center; cursor: pointer; padding: 4px 8px; border-radius: 4px; transition: background 0.2s;">
+                    <input type="checkbox" id="filter-Email" checked onchange="filterNodes()" style="margin-right: 10px; cursor: pointer;">
+                    <span style="color: #eab308; margin-right: 6px;">■</span> Email
+                </label>
+                
+                <label class="filter-item" style="display: flex; align-items: center; cursor: pointer; padding: 4px 8px; border-radius: 4px; transition: background 0.2s;">
+                    <input type="checkbox" id="filter-Person" checked onchange="filterNodes()" style="margin-right: 10px; cursor: pointer;">
+                    <span style="color: #ec4899; margin-right: 6px;">●</span> Person
+                </label>
+            </div>
+            
+            <div style="margin-top: 12px; padding-top: 10px; border-top: 1px solid #45475a;">
+                <button onclick="showAllNodes()" style="
+                    width: 100%;
+                    padding: 8px 12px;
+                    background: #3b82f6;
+                    color: white;
+                    border: none;
+                    border-radius: 4px;
+                    cursor: pointer;
+                    font-size: 12px;
+                    transition: background 0.2s;
+                " onmouseover="this.style.background='#2563eb'" onmouseout="this.style.background='#3b82f6'">
+                    Show All
+                </button>
+                <button onclick="hideAllNodes()" style="
+                    width: 100%;
+                    padding: 8px 12px;
+                    margin-top: 6px;
+                    background: #45475a;
+                    color: #cdd6f4;
+                    border: none;
+                    border-radius: 4px;
+                    cursor: pointer;
+                    font-size: 12px;
+                    transition: background 0.2s;
+                " onmouseover="this.style.background='#585b70'" onmouseout="this.style.background='#45475a'">
+                    Hide All
+                </button>
+            </div>
+            
+            <div style="margin-top: 10px; padding-top: 8px; border-top: 1px solid #45475a; font-size: 11px; color: #6c7086;">
+                <span id="visibleCount">All nodes visible</span>
+            </div>
+        </div>
+        
+        <style>
+            .filter-item:hover {
+                background: rgba(69, 71, 90, 0.5);
+            }
+        </style>
+        '''
+
+        # Filter JavaScript function
+        filter_script = '''
+        <script type="text/javascript">
+            // Store original node data for restoration
+            var originalNodes = null;
+            var originalEdges = null;
+            
+            // Initialize on page load
+            document.addEventListener('DOMContentLoaded', function() {
+                // Wait for network to be ready
+                setTimeout(function() {
+                    if (typeof nodes !== 'undefined' && typeof edges !== 'undefined') {
+                        originalNodes = nodes.get();
+                        originalEdges = edges.get();
+                    }
+                }, 500);
+            });
+            
+            // Filter nodes based on checkbox states
+            function filterNodes() {
+                if (!originalNodes) {
+                    originalNodes = nodes.get();
+                    originalEdges = edges.get();
+                }
+                
+                var nodeTypes = ['Domain', 'Subdomain', 'IP', 'CloudService', 'Technology', 'Vulnerability', 'Email', 'Person'];
+                var visibleTypes = [];
+                
+                nodeTypes.forEach(function(type) {
+                    var checkbox = document.getElementById('filter-' + type);
+                    if (checkbox && checkbox.checked) {
+                        visibleTypes.push(type);
+                    }
+                });
+                
+                // Update node visibility
+                var updatedNodes = originalNodes.map(function(node) {
+                    var nodeGroup = node.group || 'Unknown';
+                    // Handle IP_Cloud as IP
+                    if (nodeGroup === 'IP_Cloud') nodeGroup = 'IP';
+                    
+                    var isVisible = visibleTypes.includes(nodeGroup);
+                    return {
+                        id: node.id,
+                        hidden: !isVisible
+                    };
+                });
+                
+                // Apply updates
+                nodes.update(updatedNodes);
+                
+                // Update edge visibility (hide edges connected to hidden nodes)
+                var hiddenNodeIds = new Set();
+                updatedNodes.forEach(function(node) {
+                    if (node.hidden) {
+                        hiddenNodeIds.add(node.id);
+                    }
+                });
+                
+                var updatedEdges = originalEdges.map(function(edge) {
+                    var isHidden = hiddenNodeIds.has(edge.from) || hiddenNodeIds.has(edge.to);
+                    return {
+                        id: edge.id,
+                        hidden: isHidden
+                    };
+                });
+                
+                edges.update(updatedEdges);
+                
+                // Update visible count
+                var visibleCount = updatedNodes.filter(function(n) { return !n.hidden; }).length;
+                document.getElementById('visibleCount').textContent = visibleCount + ' of ' + originalNodes.length + ' nodes';
+            }
+            
+            // Show all nodes
+            function showAllNodes() {
+                var checkboxes = document.querySelectorAll('#filterSidebar input[type="checkbox"]');
+                checkboxes.forEach(function(cb) { cb.checked = true; });
+                filterNodes();
+            }
+            
+            // Hide all nodes
+            function hideAllNodes() {
+                var checkboxes = document.querySelectorAll('#filterSidebar input[type="checkbox"]');
+                checkboxes.forEach(function(cb) { cb.checked = false; });
+                filterNodes();
+            }
+        </script>
+        '''
+
+        try:
+            content = filepath.read_text(encoding="utf-8")
+            
+            # Insert filter sidebar before closing body tag
+            content = content.replace("</body>", f"{filter_sidebar_html}{filter_script}</body>")
+            
+            filepath.write_text(content, encoding="utf-8")
+            self.logger.debug("Injected filter sidebar JavaScript")
+            
+        except Exception as e:
+            self.logger.warning(f"Could not inject filter sidebar: {e}")
 
     def export_json(self, filename: str) -> Path:
         """

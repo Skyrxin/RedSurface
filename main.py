@@ -100,9 +100,47 @@ Examples:
     )
 
     parser.add_argument(
+        "--hibp-key",
+        type=str,
+        default=None,
+        help="Have I Been Pwned API key for breach data (optional)",
+    )
+
+    parser.add_argument(
+        "--generate-permutations",
+        action="store_true",
+        help="Generate email permutations from discovered names",
+    )
+
+    parser.add_argument(
+        "--verify-emails",
+        action="store_true",
+        help="Verify discovered emails via emailrep.io (rate limited)",
+    )
+
+    parser.add_argument(
         "--skip-osint",
         action="store_true",
         help="Skip OSINT collection phase",
+    )
+
+    parser.add_argument(
+        "--nvd-key",
+        type=str,
+        default=None,
+        help="NVD API key for increased CVE lookup rate limits (optional)",
+    )
+
+    parser.add_argument(
+        "--no-nvd",
+        action="store_true",
+        help="Disable NVD CVE lookups (use mock database only)",
+    )
+
+    parser.add_argument(
+        "--no-content-analysis",
+        action="store_true",
+        help="Skip HTML/JS content analysis during fingerprinting",
     )
 
     return parser.parse_args()
@@ -159,6 +197,7 @@ async def phase_fingerprinting(
     target: Target,
     fingerprinter: TechFingerprinter,
     hostnames: List[str],
+    analyze_content: bool = True,
 ) -> Tuple[int, int]:
     """
     Phase 3-4: Technology fingerprinting and vulnerability mapping.
@@ -167,6 +206,7 @@ async def phase_fingerprinting(
         target: Target instance to populate
         fingerprinter: TechFingerprinter instance
         hostnames: List of hostnames to fingerprint
+        analyze_content: Whether to analyze HTML/JS content
 
     Returns:
         Tuple of (tech_count, vuln_count)
@@ -179,7 +219,11 @@ async def phase_fingerprinting(
         return 0, 0
 
     try:
-        fingerprint_results = await fingerprinter.run(hostnames)
+        results = await fingerprinter.run(hostnames, analyze_content=analyze_content)
+        
+        # Extract technologies and WAFs from results
+        fingerprint_results = results.get("technologies", {})
+        waf_results = results.get("wafs", {})
 
         # Populate target with fingerprint data
         for hostname, fingerprints in fingerprint_results.items():
@@ -190,9 +234,16 @@ async def phase_fingerprinting(
                 # Add CVE mappings
                 for cve in fp.cves:
                     target.add_vulnerability(tech_name, cve["cve_id"])
+        
+        # Add WAF detections as technologies
+        for hostname, waf_name in waf_results.items():
+            target.add_technology(hostname, f"WAF: {waf_name}")
 
         tech_count = sum(len(techs) for techs in target.technologies.values())
         vuln_count = sum(len(cves) for cves in target.vulnerabilities.values())
+        
+        if waf_results:
+            logger.info(f"WAFs detected: {', '.join(set(waf_results.values()))}")
 
         logger.info(
             f"Fingerprinting complete: {tech_count} technologies, "
@@ -209,6 +260,9 @@ async def phase_osint(
     target: Target,
     osint_collector: OSINTCollector,
     hunter_key: str | None = None,
+    hibp_key: str | None = None,
+    generate_permutations: bool = False,
+    verify_emails: bool = False,
 ) -> OSINTResults:
     """
     Phase 5: OSINT collection - emails and employee discovery.
@@ -217,6 +271,9 @@ async def phase_osint(
         target: Target instance to populate
         osint_collector: OSINTCollector instance
         hunter_key: Optional Hunter.io API key
+        hibp_key: Optional Have I Been Pwned API key
+        generate_permutations: Generate email permutations from names
+        verify_emails: Verify discovered emails
 
     Returns:
         OSINTResults with collected data
@@ -225,7 +282,13 @@ async def phase_osint(
     logger.info("[Phase 5] OSINT collection (emails & people)...")
 
     try:
-        results = await osint_collector.run(target.domain, hunter_key=hunter_key)
+        results = await osint_collector.run(
+            target.domain,
+            hunter_key=hunter_key,
+            hibp_key=hibp_key,
+            generate_permutations=generate_permutations,
+            verify_emails=verify_emails,
+        )
 
         # Populate target with OSINT data
         for email in results.emails:
@@ -234,10 +297,21 @@ async def phase_osint(
         for person in results.people:
             target.add_person(person.to_dict())
 
+        # Log additional info
+        sources_count = len(results.sources_queried)
+        verified_count = len(results.verified_emails)
+        
         logger.info(
             f"OSINT complete: {len(results.emails)} emails, "
-            f"{len(results.people)} people identified"
+            f"{len(results.people)} people from {sources_count} sources"
         )
+        
+        if results.dns_hints.get("mail_provider"):
+            logger.info(f"Mail provider detected: {results.dns_hints['mail_provider']}")
+        
+        if verified_count > 0:
+            logger.info(f"Verified {verified_count} emails via emailrep.io")
+        
         return results
 
     except Exception as e:
@@ -308,7 +382,13 @@ async def run_reconnaissance(
     output_dir: Path,
     hunter_key: str | None = None,
     github_token: str | None = None,
+    hibp_key: str | None = None,
+    generate_permutations: bool = False,
+    verify_emails: bool = False,
     skip_osint: bool = False,
+    nvd_key: str | None = None,
+    use_nvd: bool = True,
+    analyze_content: bool = True,
 ) -> AttackSurfaceGraph:
     """
     Main reconnaissance orchestration function.
@@ -319,7 +399,13 @@ async def run_reconnaissance(
         output_dir: Directory for output files
         hunter_key: Optional Hunter.io API key for OSINT
         github_token: Optional GitHub token for OSINT
+        hibp_key: Optional Have I Been Pwned API key
+        generate_permutations: Generate email permutations
+        verify_emails: Verify discovered emails
         skip_osint: Skip OSINT collection phase
+        nvd_key: Optional NVD API key for CVE lookups
+        use_nvd: Whether to use real NVD API
+        analyze_content: Whether to analyze HTML/JS content
 
     Returns:
         Populated AttackSurfaceGraph instance
@@ -340,6 +426,8 @@ async def run_reconnaissance(
         timeout=10.0,
         max_concurrent=20,
         verify_ssl=False,
+        nvd_api_key=nvd_key,
+        use_nvd=use_nvd,
     )
     osint_collector = OSINTCollector(
         timeout=15.0,
@@ -352,11 +440,18 @@ async def run_reconnaissance(
     # Phase 3-4: Technology Fingerprinting (async)
     # Pass discovered hostnames to fingerprinter
     hostnames_to_scan = [target.domain] + list(target.subdomains)
-    await phase_fingerprinting(target, fingerprinter, hostnames_to_scan)
+    await phase_fingerprinting(target, fingerprinter, hostnames_to_scan, analyze_content=analyze_content)
 
     # Phase 5: OSINT Collection (async)
     if not skip_osint:
-        await phase_osint(target, osint_collector, hunter_key=hunter_key)
+        await phase_osint(
+            target,
+            osint_collector,
+            hunter_key=hunter_key,
+            hibp_key=hibp_key,
+            generate_permutations=generate_permutations,
+            verify_emails=verify_emails,
+        )
     else:
         logger.info("[Phase 5] OSINT collection skipped (--skip-osint)")
 
@@ -415,7 +510,13 @@ def main() -> int:
                 output_dir=output_dir,
                 hunter_key=args.hunter_key,
                 github_token=args.github_token,
+                hibp_key=args.hibp_key,
+                generate_permutations=args.generate_permutations,
+                verify_emails=args.verify_emails,
                 skip_osint=args.skip_osint,
+                nvd_key=args.nvd_key,
+                use_nvd=not args.no_nvd,
+                analyze_content=not args.no_content_analysis,
             )
         )
     except KeyboardInterrupt:
