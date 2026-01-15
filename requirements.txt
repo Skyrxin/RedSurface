@@ -1,0 +1,6 @@
+httpx>=0.25.0
+asyncio-throttle>=1.0.2
+networkx>=3.1
+pyvis>=0.3.2
+dnspython>=2.4.0
+aiofiles>=23.2.1
