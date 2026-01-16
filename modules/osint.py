@@ -498,7 +498,7 @@ class OSINTCollector:
                 self.logger.debug(f"crt.sh search error: {e}")
 
         return list(emails)
-
+#test
     async def search_phonebook(self, domain: str) -> List[str]:
         """
         Search Phonebook.cz for emails (free, no API key needed).
