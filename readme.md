@@ -19,7 +19,7 @@ A modular Python CLI tool for external reconnaissance that discovers assets, fin
 ## Installation
 
 ```bash
-git clone https://github.com/yourusername/redsurface.git
+git clone https://github.com/Skyrxin/redsurface.git
 cd redsurface
 pip install -r requirements.txt
 ```
