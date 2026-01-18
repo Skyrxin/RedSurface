@@ -3,8 +3,9 @@ Central Target class to hold reconnaissance state.
 """
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Set, Optional
+from typing import Any, Dict, List, Set, Optional, Union
 from datetime import datetime
+from pathlib import Path
 
 
 @dataclass
@@ -32,14 +33,67 @@ class Target:
     vulnerabilities: Dict[str, List[str]] = field(default_factory=dict)  # tech -> [CVEs]
     emails: Set[str] = field(default_factory=set)  # discovered emails
     people: List[Dict[str, Any]] = field(default_factory=list)  # discovered people
+    discovered_directories: Dict[str, List[Dict[str, Any]]] = field(default_factory=dict)  # host -> [dirs]
+    port_intel: Dict[str, Dict[str, Any]] = field(default_factory=dict)  # IP -> port intel data
     scan_start: Optional[datetime] = None
     scan_end: Optional[datetime] = None
 
     def __post_init__(self) -> None:
         """Normalize domain on initialization."""
-        self.domain = self.domain.lower().strip()
-        if self.domain.startswith(("http://", "https://")):
-            self.domain = self.domain.split("://")[1].split("/")[0]
+        self.domain = self._normalize_domain(self.domain)
+
+    @staticmethod
+    def _normalize_domain(domain: str) -> str:
+        """Normalize a domain string."""
+        domain = domain.lower().strip()
+        if domain.startswith(("http://", "https://")):
+            domain = domain.split("://")[1].split("/")[0]
+        return domain
+
+    @classmethod
+    def from_domains(cls, domains: List[str]) -> List["Target"]:
+        """
+        Create multiple Target instances from a list of domains (Bulk Scan support).
+        
+        Args:
+            domains: List of domain strings
+            
+        Returns:
+            List of Target instances
+        """
+        targets = []
+        for domain in domains:
+            domain = domain.strip()
+            if domain and not domain.startswith("#"):  # Skip empty lines and comments
+                targets.append(cls(domain=domain))
+        return targets
+
+    @classmethod
+    def from_file(cls, filepath: Union[str, Path]) -> List["Target"]:
+        """
+        Create multiple Target instances from a file containing domains (Bulk Scan support).
+        
+        Args:
+            filepath: Path to file containing one domain per line
+            
+        Returns:
+            List of Target instances
+            
+        Raises:
+            FileNotFoundError: If the file doesn't exist
+            ValueError: If the file is empty or contains no valid domains
+        """
+        filepath = Path(filepath)
+        if not filepath.exists():
+            raise FileNotFoundError(f"Input file not found: {filepath}")
+        
+        with open(filepath, "r", encoding="utf-8") as f:
+            domains = [line.strip() for line in f if line.strip() and not line.startswith("#")]
+        
+        if not domains:
+            raise ValueError(f"No valid domains found in: {filepath}")
+        
+        return cls.from_domains(domains)
 
     def start_scan(self) -> None:
         """Mark the scan as started."""
@@ -95,6 +149,17 @@ class Target:
         """Add a discovered person/employee."""
         self.people.append(person_data)
 
+    def add_directory(self, host: str, dir_info: Dict[str, Any]) -> None:
+        """Add a discovered directory/file to a host."""
+        host = host.lower().strip()
+        if host not in self.discovered_directories:
+            self.discovered_directories[host] = []
+        self.discovered_directories[host].append(dir_info)
+
+    def add_port_intel(self, ip: str, intel_data: Dict[str, Any]) -> None:
+        """Add port intelligence data for an IP address."""
+        self.port_intel[ip] = intel_data
+
     def to_dict(self) -> dict:
         """Export target state to dictionary."""
         return {
@@ -106,6 +171,8 @@ class Target:
             "vulnerabilities": self.vulnerabilities,
             "emails": sorted(list(self.emails)),
             "people": self.people,
+            "discovered_directories": self.discovered_directories,
+            "port_intel": self.port_intel,
             "scan_start": self.scan_start.isoformat() if self.scan_start else None,
             "scan_end": self.scan_end.isoformat() if self.scan_end else None,
             "scan_duration_seconds": self.scan_duration,

@@ -23,6 +23,9 @@ NODE_COLORS: Dict[str, str] = {
     "Vulnerability": "#ef4444", # Red - Vulnerabilities
     "Email": "#eab308",         # Yellow - Email addresses
     "Person": "#ec4899",        # Pink - People
+    "Directory": "#f59e0b",     # Amber/Gold - Discovered directories (folder-like)
+    "Port": "#06b6d4",          # Cyan - Open ports
+    "Service": "#0ea5e9",       # Sky blue - Services running on ports
 }
 
 # Node type shapes
@@ -36,6 +39,9 @@ NODE_SHAPES: Dict[str, str] = {
     "Vulnerability": "triangle",
     "Email": "box",
     "Person": "ellipse",
+    "Directory": "star",  # Star shape for directories - distinct and visible
+    "Port": "hexagon",          # Hexagon for ports
+    "Service": "box",           # Box for services
 }
 
 # Node type sizes
@@ -49,6 +55,9 @@ NODE_SIZES: Dict[str, int] = {
     "Vulnerability": 28,
     "Email": 22,
     "Person": 25,
+    "Directory": 18,  # Slightly smaller to reduce crowding
+    "Port": 18,
+    "Service": 20,
 }
 
 # Edge colors by type
@@ -61,6 +70,9 @@ EDGE_COLORS: Dict[str, str] = {
     "AFFECTED_BY": "#f87171",    # Light red
     "USES": "#ffb6c1",           # Light pink - Person uses Email
     "BELONGS_TO": "#ffe066",     # Light gold - Email belongs to Domain
+    "HAS_PATH": "#fbbf24",       # Amber - Host has discovered path (matches Directory)
+    "HAS_PORT": "#22d3ee",       # Light cyan - IP has open port
+    "RUNS_SERVICE": "#38bdf8",   # Light sky - Port runs service
 }
 
 
@@ -352,6 +364,144 @@ class AttackSurfaceGraph:
                 )
             self._add_edge(person_node_id, email_node_id, "USES")
 
+    def add_directory(
+        self,
+        path: str,
+        host: str,
+        status_code: int = 200,
+        content_length: Optional[int] = None,
+    ) -> None:
+        """
+        Add a discovered directory/file node and HAS_PATH edge to host.
+
+        Args:
+            path: The discovered path (e.g., /admin, /.git)
+            host: Hostname where the path was discovered
+            status_code: HTTP status code returned
+            content_length: Response content length if available
+        """
+        # Create unique node ID
+        dir_node_id = f"dir:{host}/{path.lstrip('/')}"
+        
+        # Color based on status code
+        if status_code == 200:
+            emoji = "📂"
+            status_text = "OK"
+        elif status_code == 403:
+            emoji = "🔒"
+            status_text = "Forbidden"
+        elif status_code == 401:
+            emoji = "🔐"
+            status_text = "Auth Required"
+        elif status_code in [301, 302, 307, 308]:
+            emoji = "↪️"
+            status_text = "Redirect"
+        else:
+            emoji = "📄"
+            status_text = str(status_code)
+        
+        # Build tooltip
+        title_parts = [f"Path: /{path.lstrip('/')}", f"Status: {status_code} ({status_text})"]
+        if content_length:
+            title_parts.append(f"Size: {content_length} bytes")
+        
+        self._add_node(
+            node_id=dir_node_id,
+            node_type="Directory",
+            label=f"{emoji} /{path.lstrip('/')}",
+            title="\n".join(title_parts),
+            path=path,
+            status_code=status_code,
+            content_length=content_length,
+        )
+        self._add_edge(host, dir_node_id, "HAS_PATH")
+
+    def add_port(
+        self,
+        ip: str,
+        port: int,
+        protocol: str = "tcp",
+        service: Optional[str] = None,
+        version: Optional[str] = None,
+        banner: Optional[str] = None,
+    ) -> None:
+        """
+        Add an open port node and HAS_PORT edge to IP.
+
+        Args:
+            ip: IP address where the port is open
+            port: Port number
+            protocol: Protocol (tcp/udp)
+            service: Service name detected on the port
+            version: Service version if detected
+            banner: Banner/response data
+        """
+        port_node_id = f"port:{ip}:{port}/{protocol}"
+        
+        # Build label and tooltip
+        label = f"🔌 {port}/{protocol}"
+        title_parts = [f"Port: {port}/{protocol}", f"IP: {ip}"]
+        
+        if service:
+            title_parts.append(f"Service: {service}")
+            if version:
+                title_parts.append(f"Version: {version}")
+        
+        if banner:
+            # Truncate banner for tooltip
+            banner_preview = banner[:100] + "..." if len(banner) > 100 else banner
+            title_parts.append(f"Banner: {banner_preview}")
+        
+        self._add_node(
+            node_id=port_node_id,
+            node_type="Port",
+            label=label,
+            title="\n".join(title_parts),
+            port=port,
+            protocol=protocol,
+            service=service,
+            version=version,
+        )
+        self._add_edge(ip, port_node_id, "HAS_PORT")
+        
+        # If service detected, add service node
+        if service:
+            self.add_service(port_node_id, service, version)
+
+    def add_service(
+        self,
+        port_node_id: str,
+        service: str,
+        version: Optional[str] = None,
+    ) -> None:
+        """
+        Add a service node connected to a port.
+
+        Args:
+            port_node_id: The port node ID to connect to
+            service: Service name
+            version: Service version
+        """
+        service_label = service
+        if version:
+            service_label = f"{service} {version}"
+        
+        service_node_id = f"svc:{service_label}".replace(" ", "_")
+        
+        title = f"Service: {service}"
+        if version:
+            title += f"\nVersion: {version}"
+        
+        self._add_node(
+            node_id=service_node_id,
+            node_type="Service",
+            label=f"⚙️ {service_label}",
+            title=title,
+            service=service,
+            version=version,
+        )
+        self._add_edge(port_node_id, service_node_id, "RUNS_SERVICE")
+
     def add_asset(self, asset_data: Dict[str, Any]) -> None:
         """
         Add a complete asset with all related nodes and edges.
@@ -465,6 +615,39 @@ class AttackSurfaceGraph:
             name = person.get("name", "Unknown")
             email = person.get("email")
             self.add_person(name, email)
+
+        # Add discovered directories (Active Recon results)
+        if hasattr(target, 'discovered_directories') and target.discovered_directories:
+            for host, directories in target.discovered_directories.items():
+                for dir_info in directories:
+                    self.add_directory(
+                        path=dir_info.get("path", ""),
+                        host=host,
+                        status_code=dir_info.get("status_code", 200),
+                        content_length=dir_info.get("content_length"),
+                    )
+
+        # Add port intelligence data (Shodan results)
+        if hasattr(target, 'port_intel') and target.port_intel:
+            for ip, intel in target.port_intel.items():
+                # Add ports
+                for port in intel.get("ports", []):
+                    self.add_port(
+                        ip=ip,
+                        port=port,
+                        protocol="tcp",  # Default to TCP
+                    )
+                
+                # Add detailed service info if available
+                for service_info in intel.get("services", []):
+                    port_num = service_info.get("port")
+                    if port_num:
+                        port_node_id = f"port:{ip}:{port_num}/tcp"
+                        # Update port node with service info
+                        if port_node_id in self.graph.nodes:
+                            self.graph.nodes[port_node_id]["service"] = service_info.get("service")
+                            self.graph.nodes[port_node_id]["version"] = service_info.get("version")
+                            self.graph.nodes[port_node_id]["banner"] = service_info.get("banner")
 
         self.logger.info(
             f"Graph built: {self.node_count} nodes, {self.edge_count} edges"
@@ -581,6 +764,21 @@ class AttackSurfaceGraph:
                   "color": { "background": "#ec4899", "border": "#db2777", "highlight": { "background": "#f472b6", "border": "#db2777" } },
                   "shape": "ellipse",
                   "font": { "color": "#cdd6f4" }
+                },
+                "Directory": {
+                  "color": { "background": "#f59e0b", "border": "#d97706", "highlight": { "background": "#fbbf24", "border": "#d97706" } },
+                  "shape": "star",
+                  "font": { "color": "#1e1e2e" }
+                },
+                "Port": {
+                  "color": { "background": "#06b6d4", "border": "#0891b2", "highlight": { "background": "#22d3ee", "border": "#0891b2" } },
+                  "shape": "hexagon",
+                  "font": { "color": "#1e1e2e" }
+                },
+                "Service": {
+                  "color": { "background": "#0ea5e9", "border": "#0284c7", "highlight": { "background": "#38bdf8", "border": "#0284c7" } },
+                  "shape": "box",
+                  "font": { "color": "#ffffff" }
                 }
               },
               "nodes": {
@@ -607,27 +805,27 @@ class AttackSurfaceGraph:
               "physics": {
                 "hierarchicalRepulsion": {
                   "centralGravity": 0.0,
-                  "springLength": 150,
-                  "springConstant": 0.01,
-                  "nodeDistance": 180,
-                  "damping": 0.09,
+                  "springLength": 180,
+                  "springConstant": 0.008,
+                  "nodeDistance": 220,
+                  "damping": 0.12,
                   "avoidOverlap": 1
                 },
-                "maxVelocity": 50,
+                "maxVelocity": 40,
                 "solver": "hierarchicalRepulsion",
-                "timestep": 0.5,
+                "timestep": 0.4,
                 "stabilization": { 
                   "enabled": true,
-                  "iterations": 200,
+                  "iterations": 250,
                   "updateInterval": 25
                 }
               },
               "layout": {
                 "hierarchical": {
                   "enabled": true,
-                  "levelSeparation": 200,
-                  "nodeSpacing": 150,
-                  "treeSpacing": 250,
+                  "levelSeparation": 250,
+                  "nodeSpacing": 200,
+                  "treeSpacing": 300,
                   "blockShifting": true,
                   "edgeMinimization": true,
                   "parentCentralization": true,
@@ -694,6 +892,9 @@ class AttackSurfaceGraph:
             ("Cloud", NODE_COLORS["CloudService"], "■"),
             ("Technology", NODE_COLORS["Technology"], "■"),
             ("Vulnerability", NODE_COLORS["Vulnerability"], "▲"),
+            ("Directory", NODE_COLORS["Directory"], "★"),
+            ("Port", NODE_COLORS["Port"], "⬡"),
+            ("Service", NODE_COLORS["Service"], "■"),
             ("Email", NODE_COLORS["Email"], "■"),
             ("Person", NODE_COLORS["Person"], "●"),
         ]
@@ -766,13 +967,31 @@ class AttackSurfaceGraph:
             font-size: 13px;
             z-index: 1000;
             box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
-            min-width: 180px;
+            min-width: 200px;
+            max-height: 90vh;
+            overflow-y: auto;
         ">
             <div style="font-weight: bold; margin-bottom: 12px; border-bottom: 1px solid #45475a; padding-bottom: 8px; display: flex; align-items: center;">
                 <span style="margin-right: 8px;">🔍</span> Filter Nodes
             </div>
             
-            <div class="filter-group" style="display: flex; flex-direction: column; gap: 8px;">
+            <!-- Search Input -->
+            <div style="margin-bottom: 12px;">
+                <input type="text" id="nodeSearch" placeholder="Search nodes..." oninput="searchNodes(this.value)" style="
+                    width: 100%;
+                    padding: 8px 10px;
+                    background: #313244;
+                    border: 1px solid #45475a;
+                    border-radius: 4px;
+                    color: #cdd6f4;
+                    font-size: 12px;
+                    outline: none;
+                    box-sizing: border-box;
+                " onfocus="this.style.borderColor='#3b82f6'" onblur="this.style.borderColor='#45475a'">
+                <div id="searchResults" style="font-size: 11px; color: #6c7086; margin-top: 4px;"></div>
+            </div>
+            
+            <div class="filter-group" style="display: flex; flex-direction: column; gap: 6px;">
                 <label class="filter-item" style="display: flex; align-items: center; cursor: pointer; padding: 4px 8px; border-radius: 4px; transition: background 0.2s;">
                     <input type="checkbox" id="filter-Domain" checked onchange="filterNodes()" style="margin-right: 10px; cursor: pointer;">
                     <span style="color: #6366f1; margin-right: 6px;">◆</span> Domain
@@ -801,6 +1020,21 @@ class AttackSurfaceGraph:
                 <label class="filter-item" style="display: flex; align-items: center; cursor: pointer; padding: 4px 8px; border-radius: 4px; transition: background 0.2s;">
                     <input type="checkbox" id="filter-Vulnerability" checked onchange="filterNodes()" style="margin-right: 10px; cursor: pointer;">
                     <span style="color: #ef4444; margin-right: 6px;">▲</span> Vulnerability
+                </label>
+                
+                <label class="filter-item" style="display: flex; align-items: center; cursor: pointer; padding: 4px 8px; border-radius: 4px; transition: background 0.2s;">
+                    <input type="checkbox" id="filter-Directory" checked onchange="filterNodes()" style="margin-right: 10px; cursor: pointer;">
+                    <span style="color: #f59e0b; margin-right: 6px;">★</span> Directory
+                </label>
+                
+                <label class="filter-item" style="display: flex; align-items: center; cursor: pointer; padding: 4px 8px; border-radius: 4px; transition: background 0.2s;">
+                    <input type="checkbox" id="filter-Port" checked onchange="filterNodes()" style="margin-right: 10px; cursor: pointer;">
+                    <span style="color: #06b6d4; margin-right: 6px;">⬡</span> Port
+                </label>
+                
+                <label class="filter-item" style="display: flex; align-items: center; cursor: pointer; padding: 4px 8px; border-radius: 4px; transition: background 0.2s;">
+                    <input type="checkbox" id="filter-Service" checked onchange="filterNodes()" style="margin-right: 10px; cursor: pointer;">
+                    <span style="color: #0ea5e9; margin-right: 6px;">■</span> Service
                 </label>
                 
                 <label class="filter-item" style="display: flex; align-items: center; cursor: pointer; padding: 4px 8px; border-radius: 4px; transition: background 0.2s;">
@@ -886,6 +1120,22 @@ class AttackSurfaceGraph:
             .filter-item:hover {
                 background: rgba(69, 71, 90, 0.5);
             }
+            #filterSidebar::-webkit-scrollbar {
+                width: 6px;
+            }
+            #filterSidebar::-webkit-scrollbar-track {
+                background: #1e1e2e;
+            }
+            #filterSidebar::-webkit-scrollbar-thumb {
+                background: #45475a;
+                border-radius: 3px;
+            }
+            #filterSidebar::-webkit-scrollbar-thumb:hover {
+                background: #585b70;
+            }
+            #nodeSearch::placeholder {
+                color: #6c7086;
+            }
         </style>
         '''
 
@@ -895,6 +1145,7 @@ class AttackSurfaceGraph:
             // Store original node data for restoration
             var originalNodes = null;
             var originalEdges = null;
+            var searchQuery = '';
             
             // Initialize on page load
             document.addEventListener('DOMContentLoaded', function() {
@@ -903,18 +1154,48 @@ class AttackSurfaceGraph:
                     if (typeof nodes !== 'undefined' && typeof edges !== 'undefined') {
                         originalNodes = nodes.get();
                         originalEdges = edges.get();
+                        updateVisibleCount();
                     }
                 }, 500);
             });
             
-            // Filter nodes based on checkbox states
-            function filterNodes() {
+            // Search nodes by label
+            function searchNodes(query) {
+                searchQuery = query.toLowerCase().trim();
+                
                 if (!originalNodes) {
                     originalNodes = nodes.get();
                     originalEdges = edges.get();
                 }
                 
-                var nodeTypes = ['Domain', 'Subdomain', 'IP', 'CloudService', 'Technology', 'Vulnerability', 'Email', 'Person'];
+                applyFilters();
+                
+                // Update search results indicator
+                var resultsDiv = document.getElementById('searchResults');
+                if (searchQuery) {
+                    var matchCount = originalNodes.filter(function(node) {
+                        return (node.label || '').toLowerCase().includes(searchQuery) || 
+                               (node.id || '').toLowerCase().includes(searchQuery);
+                    }).length;
+                    resultsDiv.textContent = matchCount + ' matches found';
+                } else {
+                    resultsDiv.textContent = '';
+                }
+            }
+            
+            // Filter nodes based on checkbox states and search query
+            function filterNodes() {
+                applyFilters();
+            }
+            
+            // Apply both type filters and search filter
+            function applyFilters() {
+                if (!originalNodes) {
+                    originalNodes = nodes.get();
+                    originalEdges = edges.get();
+                }
+                
+                var nodeTypes = ['Domain', 'Subdomain', 'IP', 'CloudService', 'Technology', 'Vulnerability', 'Directory', 'Port', 'Service', 'Email', 'Person'];
                 var visibleTypes = [];
                 
                 nodeTypes.forEach(function(type) {
@@ -924,16 +1205,25 @@ class AttackSurfaceGraph:
                     }
                 });
                 
-                // Update node visibility
+                // Update node visibility based on type and search
                 var updatedNodes = originalNodes.map(function(node) {
                     var nodeGroup = node.group || 'Unknown';
                     // Handle IP_Cloud as IP
                     if (nodeGroup === 'IP_Cloud') nodeGroup = 'IP';
                     
-                    var isVisible = visibleTypes.includes(nodeGroup);
+                    var typeVisible = visibleTypes.includes(nodeGroup);
+                    
+                    // Apply search filter if query exists
+                    var searchVisible = true;
+                    if (searchQuery) {
+                        var nodeLabel = (node.label || '').toLowerCase();
+                        var nodeId = (node.id || '').toLowerCase();
+                        searchVisible = nodeLabel.includes(searchQuery) || nodeId.includes(searchQuery);
+                    }
+                    
                     return {
                         id: node.id,
-                        hidden: !isVisible
+                        hidden: !(typeVisible && searchVisible)
                     };
                 });
                 
@@ -958,15 +1248,35 @@ class AttackSurfaceGraph:
                 
                 edges.update(updatedEdges);
                 
-                // Update visible count
-                var visibleCount = updatedNodes.filter(function(n) { return !n.hidden; }).length;
-                document.getElementById('visibleCount').textContent = visibleCount + ' of ' + originalNodes.length + ' nodes';
+                // Focus on matched nodes if searching
+                if (searchQuery) {
+                    var visibleNodes = updatedNodes.filter(function(n) { return !n.hidden; });
+                    if (visibleNodes.length > 0 && visibleNodes.length <= 5) {
+                        network.fit({
+                            nodes: visibleNodes.map(function(n) { return n.id; }),
+                            animation: true
+                        });
+                    }
+                }
+                
+                updateVisibleCount();
+            }
+            
+            // Update visible count display
+            function updateVisibleCount() {
+                if (!originalNodes) return;
+                
+                var visibleNodes = nodes.get().filter(function(n) { return !n.hidden; });
+                document.getElementById('visibleCount').textContent = visibleNodes.length + ' of ' + originalNodes.length + ' nodes';
             }
             
             // Show all nodes
             function showAllNodes() {
                 var checkboxes = document.querySelectorAll('#filterSidebar input[type="checkbox"]');
                 checkboxes.forEach(function(cb) { cb.checked = true; });
+                document.getElementById('nodeSearch').value = '';
+                searchQuery = '';
+                document.getElementById('searchResults').textContent = '';
                 filterNodes();
             }
             
@@ -982,23 +1292,23 @@ class AttackSurfaceGraph:
                 physics: {
                     hierarchicalRepulsion: {
                         centralGravity: 0.0,
-                        springLength: 150,
-                        springConstant: 0.01,
-                        nodeDistance: 180,
-                        damping: 0.09,
+                        springLength: 180,
+                        springConstant: 0.008,
+                        nodeDistance: 220,
+                        damping: 0.12,
                         avoidOverlap: 1
                     },
-                    maxVelocity: 50,
+                    maxVelocity: 40,
                     solver: 'hierarchicalRepulsion',
-                    timestep: 0.5,
-                    stabilization: { enabled: true, iterations: 200, updateInterval: 25 }
+                    timestep: 0.4,
+                    stabilization: { enabled: true, iterations: 250, updateInterval: 25 }
                 },
                 layout: {
                     hierarchical: {
                         enabled: true,
-                        levelSeparation: 200,
-                        nodeSpacing: 150,
-                        treeSpacing: 250,
+                        levelSeparation: 250,
+                        nodeSpacing: 200,
+                        treeSpacing: 300,
                         blockShifting: true,
                         edgeMinimization: true,
                         parentCentralization: true,
@@ -1011,16 +1321,16 @@ class AttackSurfaceGraph:
             var forceLayout = {
                 physics: {
                     forceAtlas2Based: {
-                        gravitationalConstant: -80,
-                        centralGravity: 0.01,
-                        springLength: 200,
-                        springConstant: 0.08,
-                        avoidOverlap: 0.8
+                        gravitationalConstant: -100,
+                        centralGravity: 0.008,
+                        springLength: 250,
+                        springConstant: 0.06,
+                        avoidOverlap: 0.9
                     },
-                    maxVelocity: 50,
+                    maxVelocity: 40,
                     solver: 'forceAtlas2Based',
-                    timestep: 0.35,
-                    stabilization: { enabled: true, iterations: 150, updateInterval: 25 }
+                    timestep: 0.3,
+                    stabilization: { enabled: true, iterations: 200, updateInterval: 25 }
                 },
                 layout: {
                     hierarchical: {

@@ -17,10 +17,14 @@ from typing import List, Tuple
 from utils.logger import setup_logger, get_logger
 from utils.output import ensure_output_dir
 from core.target import Target
+from core.config import ScanConfig, ScanMode
 from core.graph_engine import AttackSurfaceGraph
+from core.wizard import run_wizard
 from modules.discovery import InfrastructureDiscoverer, DiscoveredAsset
 from modules.fingerprint import TechFingerprinter, TechFingerprint
 from modules.osint import OSINTCollector, OSINTResults
+from modules.active_recon import ActiveRecon, ActiveReconResults
+from modules.port_intel import PortIntel, PortIntelResults
 
 
 # ASCII Banner
@@ -56,14 +60,28 @@ Examples:
   python main.py --target example.com
   python main.py --target example.com --output ./results
   python main.py --target example.com --verbose
+  python main.py --input-file domains.txt --mode active
+  python main.py --target example.com --exclude "dev.*,staging.*"
+  python main.py --interactive
         """,
     )
 
-    parser.add_argument(
+    # Target specification (mutually exclusive)
+    target_group = parser.add_mutually_exclusive_group(required=True)
+    target_group.add_argument(
         "-t", "--target",
         type=str,
-        required=True,
         help="Target domain to perform reconnaissance on (e.g., example.com)",
+    )
+    target_group.add_argument(
+        "-i", "--input-file",
+        type=str,
+        help="File containing list of domains (one per line) for bulk scanning",
+    )
+    target_group.add_argument(
+        "--interactive",
+        action="store_true",
+        help="Launch interactive wizard for guided scan configuration",
     )
 
     parser.add_argument(
@@ -85,6 +103,38 @@ Examples:
         help="Suppress the ASCII banner",
     )
 
+    # Scan Mode and Scope
+    parser.add_argument(
+        "--mode",
+        type=str,
+        choices=["passive", "active"],
+        default="passive",
+        help="Scan mode: 'passive' (default) or 'active' (includes fuzzing)",
+    )
+
+    parser.add_argument(
+        "--exclude",
+        type=str,
+        default=None,
+        help="Comma-separated list of out-of-scope subdomains (e.g., 'dev.*,staging.target.com')",
+    )
+
+    # Custom Wordlists
+    parser.add_argument(
+        "--wordlist-subs",
+        type=str,
+        default=None,
+        help="Custom path for subdomain enumeration wordlist",
+    )
+
+    parser.add_argument(
+        "--wordlist-dirs",
+        type=str,
+        default=None,
+        help="Custom path for directory fuzzing wordlist (active mode)",
+    )
+
+    # API Keys
     parser.add_argument(
         "--hunter-key",
         type=str,
@@ -107,6 +157,21 @@ Examples:
     )
 
     parser.add_argument(
+        "--shodan-key",
+        type=str,
+        default=None,
+        help="Shodan API key for port/service lookup (optional)",
+    )
+
+    parser.add_argument(
+        "--nvd-key",
+        type=str,
+        default=None,
+        help="NVD API key for increased CVE lookup rate limits (optional)",
+    )
+
+    # Feature Flags
+    parser.add_argument(
         "--generate-permutations",
         action="store_true",
         help="Generate email permutations from discovered names",
@@ -122,13 +187,6 @@ Examples:
         "--skip-osint",
         action="store_true",
         help="Skip OSINT collection phase",
-    )
-
-    parser.add_argument(
-        "--nvd-key",
-        type=str,
-        default=None,
-        help="NVD API key for increased CVE lookup rate limits (optional)",
     )
 
     parser.add_argument(
@@ -336,7 +394,7 @@ def phase_graph_building(target: Target) -> AttackSurfaceGraph:
         AttackSurfaceGraph with all nodes and edges
     """
     logger = get_logger()
-    logger.info("[Phase 6] Building Attack Surface Intelligence Graph...")
+    logger.info("[Phase 8] Building Attack Surface Intelligence Graph...")
 
     attack_graph = AttackSurfaceGraph(title=f"Attack Surface: {target.domain}")
     attack_graph.build_from_target(target)
@@ -362,7 +420,7 @@ def phase_export(
         output_dir: Output directory path
     """
     logger = get_logger()
-    logger.info("[Phase 7] Exporting results...")
+    logger.info("[Phase 9] Exporting results...")
 
     safe_domain = target.domain.replace(".", "_")
 
@@ -396,6 +454,7 @@ async def run_reconnaissance(
     use_nvd: bool = True,
     analyze_content: bool = True,
     use_system_dns: bool = False,
+    scan_config: ScanConfig | None = None,
 ) -> AttackSurfaceGraph:
     """
     Main reconnaissance orchestration function.
@@ -414,55 +473,161 @@ async def run_reconnaissance(
         use_nvd: Whether to use real NVD API
         analyze_content: Whether to analyze HTML/JS content
         use_system_dns: Use system default DNS instead of public DNS
+        scan_config: Optional ScanConfig for advanced settings
 
     Returns:
         Populated AttackSurfaceGraph instance
     """
     logger = get_logger()
+    
+    # Use default config if not provided
+    if scan_config is None:
+        scan_config = ScanConfig(use_system_dns=use_system_dns)
 
     logger.info(f"{'=' * 60}")
     logger.info(f"Starting reconnaissance on: {target.domain}")
     logger.info(f"{'=' * 60}")
     target.start_scan()
 
-    # Initialize modules
+    # Initialize modules with config
     discoverer = InfrastructureDiscoverer(
-        timeout=3.0,
-        max_concurrent=50,
-        use_system_dns=use_system_dns,
+        timeout=scan_config.dns_timeout,
+        max_concurrent=scan_config.max_concurrent,
+        use_system_dns=scan_config.use_system_dns,
     )
     fingerprinter = TechFingerprinter(
-        timeout=10.0,
+        timeout=scan_config.http_timeout,
         max_concurrent=20,
         verify_ssl=False,
-        nvd_api_key=nvd_key,
-        use_nvd=use_nvd,
+        nvd_api_key=nvd_key or scan_config.nvd_api_key,
+        use_nvd=use_nvd and getattr(scan_config, 'module_vuln_lookup', True),
     )
     osint_collector = OSINTCollector(
         timeout=15.0,
-        github_token=github_token,
+        github_token=github_token or scan_config.github_token,
     )
 
     # Phase 1-2: Infrastructure Discovery (async)
-    assets = await phase_discovery(target, discoverer)
+    # Check if discovery should run (PASSIVE/ACTIVE always run, CUSTOM checks module flags)
+    should_run_discovery = (
+        not scan_config.is_custom_mode() or 
+        scan_config.should_run_discovery()
+    )
+    
+    if should_run_discovery:
+        assets = await phase_discovery(target, discoverer)
+        
+        # Filter out-of-scope subdomains based on config blacklist
+        if scan_config.scope_blacklist:
+            in_scope_subdomains = {
+                sub for sub in target.subdomains 
+                if scan_config.is_in_scope(sub)
+            }
+            excluded_count = len(target.subdomains) - len(in_scope_subdomains)
+            if excluded_count > 0:
+                logger.info(f"Excluded {excluded_count} out-of-scope subdomains")
+                target.subdomains = in_scope_subdomains
+    else:
+        logger.info("[Phase 1-2] Infrastructure discovery skipped (disabled in custom mode)")
+        # Still need to resolve target domain for other phases
+        target.add_ip(target.domain, "0.0.0.0")  # Placeholder
 
     # Phase 3-4: Technology Fingerprinting (async)
-    # Pass discovered hostnames to fingerprinter
-    hostnames_to_scan = [target.domain] + list(target.subdomains)
-    await phase_fingerprinting(target, fingerprinter, hostnames_to_scan, analyze_content=analyze_content)
+    should_run_fingerprinting = (
+        not scan_config.is_custom_mode() or 
+        scan_config.should_run_fingerprinting()
+    )
+    
+    if should_run_fingerprinting:
+        # Pass discovered hostnames to fingerprinter (only in-scope)
+        hostnames_to_scan = [target.domain] + [
+            sub for sub in target.subdomains 
+            if scan_config.is_in_scope(sub)
+        ]
+        await phase_fingerprinting(target, fingerprinter, hostnames_to_scan, analyze_content=analyze_content)
+    else:
+        logger.info("[Phase 3-4] Technology fingerprinting skipped (disabled in custom mode)")
 
     # Phase 5: OSINT Collection (async)
-    if not skip_osint:
+    should_run_osint = (
+        not skip_osint and (
+            not scan_config.is_custom_mode() or 
+            scan_config.should_run_osint()
+        )
+    )
+    
+    if should_run_osint:
         await phase_osint(
             target,
             osint_collector,
-            hunter_key=hunter_key,
-            hibp_key=hibp_key,
+            hunter_key=hunter_key or scan_config.hunter_api_key,
+            hibp_key=hibp_key or scan_config.hibp_api_key,
             generate_permutations=generate_permutations,
             verify_emails=verify_emails,
         )
     else:
-        logger.info("[Phase 5] OSINT collection skipped (--skip-osint)")
+        logger.info("[Phase 5] OSINT collection skipped")
+
+    # Phase 6: Active Reconnaissance
+    should_run_active = (
+        scan_config.is_active_mode() or 
+        (scan_config.is_custom_mode() and scan_config.should_run_active_recon())
+    )
+    
+    if should_run_active:
+        logger.info("[Phase 6] Active reconnaissance (zone transfer, dir enum)...")
+        active_recon = ActiveRecon(
+            config=scan_config,
+            timeout=scan_config.http_timeout,
+            max_concurrent=20,
+        )
+        active_results = await active_recon.run(target)
+        
+        # Store directory enumeration results in target
+        for host, directories in active_results.discovered_directories.items():
+            for dir_info in directories:
+                target.add_directory(host, dir_info)
+        
+        # Log active recon summary
+        total_dirs = sum(len(d) for d in active_results.discovered_directories.values())
+        logger.info(f"Active Recon: Zone transfer {'succeeded' if active_results.zone_transfer_success else 'denied'}, {total_dirs} directories found")
+    else:
+        logger.info("[Phase 6] Active reconnaissance skipped")
+
+    # Phase 7: Port Intelligence (Shodan - passive API lookup)
+    should_run_port_intel = (
+        scan_config.shodan_api_key and (
+            not scan_config.is_custom_mode() or 
+            getattr(scan_config, 'module_port_scan', False)
+        )
+    )
+    
+    if should_run_port_intel:
+        logger.info("[Phase 7] Port intelligence (Shodan API lookup)...")
+        port_intel = PortIntel(
+            shodan_api_key=scan_config.shodan_api_key,
+            rate_limit_delay=1.0,
+            timeout=15.0,
+        )
+        
+        # Query all resolved IPs
+        all_ips = set()
+        for ip_list in target.ips.values():
+            all_ips.update(ip_list)
+        
+        total_ports = 0
+        total_services = 0
+        
+        for ip in all_ips:
+            intel = port_intel.query_ip(ip)
+            if intel:
+                target.add_port_intel(ip, intel.to_dict())
+                total_ports += len(intel.ports)
+                total_services += len(intel.services)
+        
+        logger.info(f"Port Intel: {len(all_ips)} IPs queried, {total_ports} ports, {total_services} services found")
+    else:
+        logger.info("[Phase 7] Port intelligence skipped (no Shodan API key)")
 
     # Mark scan complete
     target.end_scan()
@@ -470,10 +635,10 @@ async def run_reconnaissance(
     logger.info(f"Reconnaissance completed in {target.scan_duration:.2f} seconds")
     logger.info(f"{'=' * 60}")
 
-    # Phase 6: Build Graph (sync - NetworkX operations)
+    # Phase 8: Build Graph (sync - NetworkX operations)
     attack_graph = phase_graph_building(target)
 
-    # Phase 7: Export Results (sync - file I/O)
+    # Phase 9: Export Results (sync - file I/O)
     phase_export(target, attack_graph, output_dir)
 
     return attack_graph
@@ -507,55 +672,151 @@ def main() -> int:
         logger.error(f"Permission denied: Cannot create output directory '{args.output}'")
         return 1
 
-    # Initialize target
-    target = Target(domain=args.target)
-    logger.info(f"Target initialized: {target.domain}")
+    # Handle interactive mode
+    if getattr(args, 'interactive', False):
+        scan_config, targets = run_wizard()
+        if scan_config is None or not targets:
+            logger.info("Interactive wizard cancelled")
+            return 0
+        
+        # Override output directory and log level from wizard config
+        if hasattr(scan_config, 'output_dir') and scan_config.output_dir:
+            output_path = Path(scan_config.output_dir)
+            output_dir = ensure_output_dir(output_path)
+            
+        if hasattr(scan_config, 'verbose') and scan_config.verbose:
+            log_level = logging.DEBUG
+            logger = setup_logger(level=log_level, log_file=output_path / "redsurface.log")
+        
+        logger.info(f"Scan mode: {scan_config.mode.value.upper()}")
+        if scan_config.scope_blacklist:
+            logger.info(f"Excluded patterns: {', '.join(scan_config.scope_blacklist)}")
+    else:
+        # Create ScanConfig from arguments
+        scan_config = ScanConfig.from_args(args)
+        logger.info(f"Scan mode: {scan_config.mode.value.upper()}")
+        
+        if scan_config.scope_blacklist:
+            logger.info(f"Excluded patterns: {', '.join(scan_config.scope_blacklist)}")
 
-    # Run the async reconnaissance pipeline
-    try:
-        attack_graph = asyncio.run(
-            run_reconnaissance(
-                target=target,
-                output_dir=output_dir,
-                hunter_key=args.hunter_key,
-                github_token=args.github_token,
-                hibp_key=args.hibp_key,
-                generate_permutations=args.generate_permutations,
-                verify_emails=args.verify_emails,
-                skip_osint=args.skip_osint,
-                nvd_key=args.nvd_key,
-                use_nvd=not args.no_nvd,
-                analyze_content=not args.no_content_analysis,
-                use_system_dns=args.use_system_dns,
+        # Initialize target(s) - support for bulk scanning
+        targets: List[Target] = []
+        
+        if args.input_file:
+            # Bulk scan mode - load domains from file
+            try:
+                targets = Target.from_file(args.input_file)
+                logger.info(f"Loaded {len(targets)} targets from {args.input_file}")
+            except FileNotFoundError as e:
+                logger.error(str(e))
+                return 1
+            except ValueError as e:
+                logger.error(str(e))
+                return 1
+        else:
+            # Single target mode
+            targets = [Target(domain=args.target)]
+            logger.info(f"Target initialized: {targets[0].domain}")
+
+    # Track overall results for bulk scans
+    total_success = 0
+    total_failed = 0
+    all_results = []
+
+    # Run reconnaissance for each target
+    for idx, target in enumerate(targets, 1):
+        if len(targets) > 1:
+            logger.info(f"\n{'='*60}")
+            logger.info(f"Processing target {idx}/{len(targets)}: {target.domain}")
+            logger.info(f"{'='*60}")
+
+        try:
+            attack_graph = asyncio.run(
+                run_reconnaissance(
+                    target=target,
+                    output_dir=output_dir,
+                    hunter_key=args.hunter_key,
+                    github_token=args.github_token,
+                    hibp_key=args.hibp_key,
+                    generate_permutations=args.generate_permutations,
+                    verify_emails=args.verify_emails,
+                    skip_osint=args.skip_osint,
+                    nvd_key=args.nvd_key,
+                    use_nvd=not args.no_nvd,
+                    analyze_content=not args.no_content_analysis,
+                    use_system_dns=args.use_system_dns,
+                    scan_config=scan_config,
+                )
             )
-        )
-    except KeyboardInterrupt:
-        logger.warning("Scan interrupted by user")
-        return 130
-    except Exception as e:
-        logger.exception(f"Fatal error during reconnaissance: {e}")
-        return 1
+            total_success += 1
+            all_results.append({
+                "domain": target.domain,
+                "status": "success",
+                "subdomains": len(target.subdomains),
+                "ips": len(target.ips),
+                "technologies": sum(len(t) for t in target.technologies.values()),
+                "vulnerabilities": sum(len(v) for v in target.vulnerabilities.values()),
+                "directories": sum(len(d) for d in target.discovered_directories.values()),
+                "ports": sum(len(p.get("ports", [])) for p in target.port_intel.values()),
+                "graph_nodes": attack_graph.node_count,
+                "graph_edges": attack_graph.edge_count,
+                "duration": target.scan_duration,
+            })
+            
+            # Print individual summary
+            total_dirs = sum(len(d) for d in target.discovered_directories.values())
+            total_ports = sum(len(p.get("ports", [])) for p in target.port_intel.values())
+            print("\n" + "=" * 60)
+            print("  SCAN SUMMARY")
+            print("=" * 60)
+            print(f"  Target:          {target.domain}")
+            print(f"  Mode:            {scan_config.mode.value.upper()}")
+            print(f"  Subdomains:      {len(target.subdomains)}")
+            print(f"  IPs Resolved:    {len(target.ips)}")
+            print(f"  Technologies:    {sum(len(t) for t in target.technologies.values())}")
+            print(f"  Vulnerabilities: {sum(len(v) for v in target.vulnerabilities.values())}")
+            print(f"  Directories:     {total_dirs}")
+            print(f"  Open Ports:      {total_ports}")
+            print(f"  Emails Found:    {len(target.emails)}")
+            print(f"  People Found:    {len(target.people)}")
+            print(f"  Graph Nodes:     {attack_graph.node_count}")
+            print(f"  Graph Edges:     {attack_graph.edge_count}")
+            print(f"  Scan Duration:   {target.scan_duration:.2f}s")
+            print("=" * 60)
+            print(f"  Output:          {output_dir}")
+            print("=" * 60 + "\n")
 
-    # Print summary
-    print("\n" + "=" * 60)
-    print("  SCAN SUMMARY")
-    print("=" * 60)
-    print(f"  Target:          {target.domain}")
-    print(f"  Subdomains:      {len(target.subdomains)}")
-    print(f"  IPs Resolved:    {len(target.ips)}")
-    print(f"  Technologies:    {sum(len(t) for t in target.technologies.values())}")
-    print(f"  Vulnerabilities: {sum(len(v) for v in target.vulnerabilities.values())}")
-    print(f"  Emails Found:    {len(target.emails)}")
-    print(f"  People Found:    {len(target.people)}")
-    print(f"  Graph Nodes:     {attack_graph.node_count}")
-    print(f"  Graph Edges:     {attack_graph.edge_count}")
-    print(f"  Scan Duration:   {target.scan_duration:.2f}s")
-    print("=" * 60)
-    print(f"  Output:          {output_dir}")
-    print("=" * 60 + "\n")
+        except KeyboardInterrupt:
+            logger.warning("Scan interrupted by user")
+            return 130
+        except Exception as e:
+            logger.exception(f"Error scanning {target.domain}: {e}")
+            total_failed += 1
+            all_results.append({
+                "domain": target.domain,
+                "status": "failed",
+                "error": str(e),
+            })
+            continue
+
+    # Print bulk scan summary if multiple targets
+    if len(targets) > 1:
+        print("\n" + "=" * 60)
+        print("  BULK SCAN SUMMARY")
+        print("=" * 60)
+        print(f"  Total Targets:   {len(targets)}")
+        print(f"  Successful:      {total_success}")
+        print(f"  Failed:          {total_failed}")
+        print("=" * 60)
+        
+        # Save bulk results summary
+        bulk_summary_path = output_dir / "bulk_scan_summary.json"
+        with open(bulk_summary_path, "w", encoding="utf-8") as f:
+            json.dump(all_results, f, indent=2, default=str)
+        logger.info(f"Bulk scan summary saved to: {bulk_summary_path}")
 
     logger.info("RedSurface completed successfully ✓")
-    return 0
+    return 0 if total_failed == 0 else 1
 
 
 if __name__ == "__main__":
