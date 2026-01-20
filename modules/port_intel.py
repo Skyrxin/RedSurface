@@ -190,6 +190,10 @@ class PortIntel:
                     self.logger.error("Invalid Shodan API key")
                     self.results.queries_failed += 1
                     return None
+                elif response.status_code == 403:
+                    self.logger.warning(f"Shodan API 403 for {ip_address} - API key may have no query credits (free tier)")
+                    self.results.queries_failed += 1
+                    return None
                 elif response.status_code == 429:
                     self.logger.warning("Shodan rate limit exceeded, waiting...")
                     time.sleep(5)  # Extra wait on rate limit

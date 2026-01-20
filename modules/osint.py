@@ -118,6 +118,7 @@ class OSINTCollector:
         timeout: float = 15.0,
         max_retries: int = 2,
         github_token: Optional[str] = None,
+        use_system_dns: bool = True,
     ) -> None:
         """
         Initialize the OSINT collector.
@@ -126,10 +127,12 @@ class OSINTCollector:
             timeout: HTTP request timeout in seconds
             max_retries: Maximum retry attempts for failed requests
             github_token: Optional GitHub personal access token for higher rate limits
+            use_system_dns: Use system DNS instead of public DNS servers
         """
         self.timeout = timeout
         self.max_retries = max_retries
         self.github_token = github_token
+        self.use_system_dns = use_system_dns
         self.logger = get_logger()
 
     def _build_email_pattern(self, domain: str) -> re.Pattern:
@@ -825,9 +828,12 @@ class OSINTCollector:
 
         try:
             resolver = dns.asyncresolver.Resolver()
-            resolver.nameservers = ["8.8.8.8", "1.1.1.1", "9.9.9.9"]
-            resolver.timeout = 5.0
-            resolver.lifetime = 10.0
+            # Use system DNS or public DNS based on configuration
+            if not self.use_system_dns:
+                resolver.nameservers = ["8.8.8.8", "1.1.1.1", "9.9.9.9"]
+            # System DNS uses default nameservers from /etc/resolv.conf or Windows DNS
+            resolver.timeout = 3.0  # Shorter timeout for OSINT DNS queries
+            resolver.lifetime = 5.0  # Faster failure for non-critical lookups
 
             # MX records
             try:

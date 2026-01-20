@@ -715,7 +715,7 @@ class TechFingerprinter:
         hostname: str,
         ports: Optional[List[int]] = None,
         analyze_content: bool = True,
-    ) -> Tuple[List[TechFingerprint], Optional[str]]:
+    ) -> Tuple[List[TechFingerprint], Optional[str], Optional[Dict[str, Any]]]:
         """
         Fingerprint technologies on a host.
 
@@ -725,11 +725,12 @@ class TechFingerprinter:
             analyze_content: Whether to fetch and analyze page content
 
         Returns:
-            Tuple of (List of detected TechFingerprint objects, detected WAF name or None)
+            Tuple of (List of detected TechFingerprint objects, detected WAF name or None, HTTP response info)
         """
         ports = ports or [443, 80]
         all_fingerprints: Dict[str, TechFingerprint] = {}
         detected_waf: Optional[str] = None
+        http_response_info: Optional[Dict[str, Any]] = None
 
         for port in ports:
             scheme = "https" if port == 443 else "http"
@@ -739,6 +740,17 @@ class TechFingerprinter:
             headers, cookies = await self.analyze_headers(url)
             if headers is None:
                 continue
+            
+            # Store HTTP response info from first successful connection
+            if http_response_info is None:
+                http_response_info = {
+                    "url": url,
+                    "status_code": headers.get(":status", "200"),  # httpx doesn't expose status directly here
+                    "server": headers.get("server"),
+                    "content_type": headers.get("content-type"),
+                    "x_powered_by": headers.get("x-powered-by"),
+                    "headers": dict(headers),
+                }
 
             # Match technologies from headers
             fingerprints = self.match_tech(headers, cookies)
@@ -778,7 +790,7 @@ class TechFingerprinter:
                         if cve["cve_id"] not in existing_cve_ids:
                             all_fingerprints[key].cves.append(cve)
 
-        return list(all_fingerprints.values()), detected_waf
+        return list(all_fingerprints.values()), detected_waf, http_response_info
 
     async def run(
         self,
@@ -794,18 +806,19 @@ class TechFingerprinter:
 
         Returns:
             Dictionary with 'technologies' mapping hostname to TechFingerprints,
-            and 'wafs' mapping hostname to detected WAF
+            'wafs' mapping hostname to detected WAF, and 'responses' with HTTP info
         """
         self.logger.info(f"Starting technology fingerprinting on {len(hostnames)} hosts")
         
         results: Dict[str, List[TechFingerprint]] = {}
         wafs: Dict[str, str] = {}
+        responses: Dict[str, Dict[str, Any]] = {}
         semaphore = asyncio.Semaphore(self.max_concurrent)
 
-        async def fingerprint_with_limit(host: str) -> Tuple[str, List[TechFingerprint], Optional[str]]:
+        async def fingerprint_with_limit(host: str) -> Tuple[str, List[TechFingerprint], Optional[str], Optional[Dict[str, Any]]]:
             async with semaphore:
-                fingerprints, waf = await self.fingerprint_host(host, analyze_content=analyze_content)
-                return host, fingerprints, waf
+                fingerprints, waf, response_info = await self.fingerprint_host(host, analyze_content=analyze_content)
+                return host, fingerprints, waf, response_info
 
         tasks = [fingerprint_with_limit(host) for host in hostnames]
         completed = await asyncio.gather(*tasks, return_exceptions=True)
@@ -814,7 +827,7 @@ class TechFingerprinter:
             if isinstance(result, Exception):
                 self.logger.debug(f"Fingerprinting error: {result}")
                 continue
-            hostname, fingerprints, waf = result
+            hostname, fingerprints, waf, response_info = result
             if fingerprints:
                 results[hostname] = fingerprints
                 self.logger.info(
@@ -822,6 +835,8 @@ class TechFingerprinter:
                 )
             if waf:
                 wafs[hostname] = waf
+            if response_info:
+                responses[hostname] = response_info
 
         # Summary
         total_techs = sum(len(fps) for fps in results.values())
@@ -837,4 +852,5 @@ class TechFingerprinter:
         return {
             "technologies": results,
             "wafs": wafs,
+            "responses": responses,
         }

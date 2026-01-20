@@ -46,10 +46,10 @@ class ScanConfig:
     shodan_api_key: Optional[str] = None
     
     # Network settings
-    dns_timeout: float = 3.0
+    dns_timeout: float = 5.0  # Balanced timeout for system DNS
     http_timeout: float = 10.0
-    max_concurrent: int = 50
-    use_system_dns: bool = False
+    max_concurrent: int = 100  # Increased for faster parallel resolution
+    use_system_dns: bool = True  # Use system DNS by default (more reliable)
     
     # API Keys
     nvd_api_key: Optional[str] = None
@@ -206,7 +206,7 @@ class ScanConfig:
 
     def to_dict(self) -> dict:
         """Export configuration to dictionary."""
-        return {
+        config_dict = {
             "wordlist_subdomains": str(self.wordlist_subdomains) if self.wordlist_subdomains else None,
             "wordlist_dirs": str(self.wordlist_dirs) if self.wordlist_dirs else None,
             "mode": self.mode.value,
@@ -220,6 +220,24 @@ class ScanConfig:
             "max_concurrent": self.max_concurrent,
             "use_system_dns": self.use_system_dns,
         }
+        
+        # Add custom mode module flags if applicable
+        if self.mode == ScanMode.CUSTOM:
+            config_dict["modules_enabled"] = {
+                "subdomain_enum": self.module_subdomain_enum,
+                "dns_resolution": self.module_dns_resolution,
+                "ssl_analysis": self.module_ssl_analysis,
+                "tech_detection": self.module_tech_detection,
+                "waf_detection": self.module_waf_detection,
+                "vuln_lookup": self.module_vuln_lookup,
+                "email_discovery": self.module_email_discovery,
+                "people_discovery": self.module_people_discovery,
+                "zone_transfer": self.module_zone_transfer,
+                "dir_enum": self.module_dir_enum,
+                "port_scan": self.module_port_scan,
+            }
+        
+        return config_dict
 
     @classmethod
     def from_args(cls, args) -> "ScanConfig":

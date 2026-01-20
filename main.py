@@ -25,6 +25,7 @@ from modules.fingerprint import TechFingerprinter, TechFingerprint
 from modules.osint import OSINTCollector, OSINTResults
 from modules.active_recon import ActiveRecon, ActiveReconResults
 from modules.port_intel import PortIntel, PortIntelResults
+from utils.report_generator import ReportGenerator
 
 
 # ASCII Banner
@@ -39,7 +40,7 @@ BANNER = r"""
 ║   ╚═╝  ╚═╝╚══════╝╚═════╝ ╚══════╝ ╚═════╝ ╚═╝  ╚═╝╚═╝     ╚═╝  ╚═╝ ╚═════╝╚══════╝ ║
 ║                                                                           ║
 ║              Attack Surface Intelligence Graph Generator                  ║
-║                              v1.2.2                                       ║
+║                              v1.3.0                                       ║
 ╚═══════════════════════════════════════════════════════════════════════════╝
 """
 
@@ -207,6 +208,12 @@ Examples:
         help="Use system default DNS instead of public DNS servers (8.8.8.8, 1.1.1.1)",
     )
 
+    parser.add_argument(
+        "--no-report",
+        action="store_true",
+        help="Skip HTML report generation (only output JSON and graph)",
+    )
+
     return parser.parse_args()
 
 
@@ -244,6 +251,26 @@ async def phase_discovery(
             for ip in asset.ips:
                 for provider in asset.cloud_providers:
                     target.add_cloud_service(ip, provider)
+            
+            # Store full infrastructure asset details
+            target.add_infrastructure_asset(asset.hostname, {
+                "hostname": asset.hostname,
+                "ips": asset.ips,
+                "cnames": asset.cnames,
+                "cloud_providers": asset.cloud_providers,
+                "is_alive": asset.is_alive,
+                "error": asset.error,
+            })
+            
+            # Store SSL certificate info if available
+            if asset.ssl_cert:
+                target.add_ssl_certificate(asset.hostname, asset.ssl_cert.to_dict())
+            
+            # Store DNS records (A records from IPs, CNAME from cnames)
+            if asset.ips:
+                target.add_dns_records(asset.hostname, "A", asset.ips)
+            if asset.cnames:
+                target.add_dns_records(asset.hostname, "CNAME", asset.cnames)
 
         logger.info(
             f"Discovery complete: {len(assets)} assets, "
@@ -288,12 +315,16 @@ async def phase_fingerprinting(
         # Extract technologies and WAFs from results
         fingerprint_results = results.get("technologies", {})
         waf_results = results.get("wafs", {})
+        http_responses = results.get("responses", {})
 
         # Populate target with fingerprint data
         for hostname, fingerprints in fingerprint_results.items():
             for fp in fingerprints:
                 tech_name = f"{fp.name} {fp.version}" if fp.version else fp.name
                 target.add_technology(hostname, tech_name)
+                
+                # Store detailed technology info
+                target.add_technology_detail(hostname, fp.to_dict())
 
                 # Add CVE mappings
                 for cve in fp.cves:
@@ -302,6 +333,19 @@ async def phase_fingerprinting(
         # Add WAF detections as technologies
         for hostname, waf_name in waf_results.items():
             target.add_technology(hostname, f"WAF: {waf_name}")
+            target.add_technology_detail(hostname, {
+                "name": waf_name,
+                "version": None,
+                "full_name": f"WAF: {waf_name}",
+                "source": "header",
+                "confidence": "high",
+                "cves": [],
+                "type": "waf",
+            })
+        
+        # Store HTTP response details
+        for hostname, response_data in http_responses.items():
+            target.add_http_response(hostname, response_data)
 
         tech_count = sum(len(techs) for techs in target.technologies.values())
         vuln_count = sum(len(cves) for cves in target.vulnerabilities.values())
@@ -410,6 +454,7 @@ def phase_export(
     target: Target,
     attack_graph: AttackSurfaceGraph,
     output_dir: Path,
+    generate_report: bool = True,
 ) -> None:
     """
     Phase 7: Export all results to files.
@@ -418,6 +463,7 @@ def phase_export(
         target: Populated Target instance
         attack_graph: Built AttackSurfaceGraph
         output_dir: Output directory path
+        generate_report: Whether to generate HTML report
     """
     logger = get_logger()
     logger.info("[Phase 9] Exporting results...")
@@ -429,6 +475,18 @@ def phase_export(
     with open(results_path, "w", encoding="utf-8") as f:
         json.dump(target.to_dict(), f, indent=2, default=str)
     logger.info(f"Scan results: {results_path}")
+
+    # Generate HTML report from results
+    if generate_report:
+        try:
+            report_path = output_dir / f"{safe_domain}_report.html"
+            report_gen = ReportGenerator(target.to_dict())
+            html_report = report_gen.generate()
+            with open(report_path, "w", encoding="utf-8") as f:
+                f.write(html_report)
+            logger.info(f"HTML Report: {report_path}")
+        except Exception as e:
+            logger.warning(f"Failed to generate HTML report: {e}")
 
     # Export interactive HTML graph
     html_path = output_dir / f"{safe_domain}_graph.html"
@@ -453,8 +511,9 @@ async def run_reconnaissance(
     nvd_key: str | None = None,
     use_nvd: bool = True,
     analyze_content: bool = True,
-    use_system_dns: bool = False,
+    use_system_dns: bool = True,  # Default to system DNS for better network compatibility
     scan_config: ScanConfig | None = None,
+    generate_report: bool = True,
 ) -> AttackSurfaceGraph:
     """
     Main reconnaissance orchestration function.
@@ -474,6 +533,7 @@ async def run_reconnaissance(
         analyze_content: Whether to analyze HTML/JS content
         use_system_dns: Use system default DNS instead of public DNS
         scan_config: Optional ScanConfig for advanced settings
+        generate_report: Whether to generate HTML report
 
     Returns:
         Populated AttackSurfaceGraph instance
@@ -488,6 +548,9 @@ async def run_reconnaissance(
     logger.info(f"Starting reconnaissance on: {target.domain}")
     logger.info(f"{'=' * 60}")
     target.start_scan()
+    
+    # Store scan configuration used
+    target.set_scan_config(scan_config.to_dict())
 
     # Initialize modules with config
     discoverer = InfrastructureDiscoverer(
@@ -497,14 +560,15 @@ async def run_reconnaissance(
     )
     fingerprinter = TechFingerprinter(
         timeout=scan_config.http_timeout,
-        max_concurrent=20,
+        max_concurrent=50,  # Higher concurrency for faster HTTP checks
         verify_ssl=False,
         nvd_api_key=nvd_key or scan_config.nvd_api_key,
         use_nvd=use_nvd and getattr(scan_config, 'module_vuln_lookup', True),
     )
     osint_collector = OSINTCollector(
-        timeout=15.0,
+        timeout=10.0,  # Reduced from 15s for faster OSINT
         github_token=github_token or scan_config.github_token,
+        use_system_dns=scan_config.use_system_dns,
     )
 
     # Phase 1-2: Infrastructure Discovery (async)
@@ -579,7 +643,7 @@ async def run_reconnaissance(
         active_recon = ActiveRecon(
             config=scan_config,
             timeout=scan_config.http_timeout,
-            max_concurrent=20,
+            max_concurrent=50,  # Increased for faster directory enumeration
         )
         active_results = await active_recon.run(target)
         
@@ -587,6 +651,9 @@ async def run_reconnaissance(
         for host, directories in active_results.discovered_directories.items():
             for dir_info in directories:
                 target.add_directory(host, dir_info)
+        
+        # Store full active recon results
+        target.set_active_recon_results(active_results.to_dict())
         
         # Log active recon summary
         total_dirs = sum(len(d) for d in active_results.discovered_directories.values())
@@ -639,7 +706,7 @@ async def run_reconnaissance(
     attack_graph = phase_graph_building(target)
 
     # Phase 9: Export Results (sync - file I/O)
-    phase_export(target, attack_graph, output_dir)
+    phase_export(target, attack_graph, output_dir, generate_report=generate_report)
 
     return attack_graph
 
@@ -746,6 +813,7 @@ def main() -> int:
                     analyze_content=not args.no_content_analysis,
                     use_system_dns=args.use_system_dns,
                     scan_config=scan_config,
+                    generate_report=not args.no_report,
                 )
             )
             total_success += 1

@@ -149,7 +149,7 @@ class InteractiveWizard:
                 nvd_api_key=nvd_key,
                 github_token=github_token,
                 hibp_api_key=hibp_key,
-                use_system_dns=options.get("use_system_dns", False),
+                use_system_dns=options.get("use_system_dns", True),  # Default to system DNS
                 skip_osint=osint_options.get("skip_osint", False),
                 verify_emails=osint_options.get("verify_emails", False),
                 generate_permutations=osint_options.get("generate_permutations", False),
@@ -620,16 +620,18 @@ class InteractiveWizard:
         """Get additional scan options."""
         options = {}
         
-        # DNS settings
+        # DNS settings (default to system DNS for better compatibility)
         use_system_dns = questionary.confirm(
             "Use system DNS instead of public DNS (8.8.8.8)?",
-            default=False,
+            default=True,  # Default to system DNS for better network compatibility
             style=WIZARD_STYLE,
         ).ask()
         
         options["use_system_dns"] = use_system_dns
         if use_system_dns:
             print("  ✓ Using system DNS\n")
+        else:
+            print("  ✓ Using public DNS (8.8.8.8, 1.1.1.1)\n")
         
         # Verbose mode
         verbose = questionary.confirm(

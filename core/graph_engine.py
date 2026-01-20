@@ -688,13 +688,13 @@ class AttackSurfaceGraph:
     ) -> Path:
         """
         Export the graph to an interactive HTML file using PyVis.
-        Uses BloodHound-style forceAtlas2Based layout for clean visualization.
+        STABLE LAYOUT - Physics disabled after initial stabilization.
 
         Args:
             filename: Output filename (will add .html if not present)
             height: Height of the visualization
             width: Width of the visualization
-            physics: Enable physics simulation
+            physics: Enable physics simulation (only for initial layout)
             notebook: Whether running in a notebook environment
 
         Returns:
@@ -715,136 +715,87 @@ class AttackSurfaceGraph:
             font_color="#cdd6f4",  # Light text
         )
 
-        # Configure BloodHound-style physics layout
-        if physics:
-            options = """
-            var options = {
-              "groups": {
-                "Domain": {
-                  "color": { "background": "#6366f1", "border": "#4f46e5", "highlight": { "background": "#818cf8", "border": "#4f46e5" } },
-                  "shape": "diamond",
-                  "font": { "color": "#cdd6f4" }
-                },
-                "Subdomain": {
-                  "color": { "background": "#8b5cf6", "border": "#7c3aed", "highlight": { "background": "#a78bfa", "border": "#7c3aed" } },
-                  "shape": "dot",
-                  "font": { "color": "#cdd6f4" }
-                },
-                "IP": {
-                  "color": { "background": "#22c55e", "border": "#16a34a", "highlight": { "background": "#4ade80", "border": "#16a34a" } },
-                  "shape": "dot",
-                  "font": { "color": "#cdd6f4" }
-                },
-                "IP_Cloud": {
-                  "color": { "background": "#f97316", "border": "#ea580c", "highlight": { "background": "#fb923c", "border": "#ea580c" } },
-                  "shape": "dot",
-                  "font": { "color": "#cdd6f4" }
-                },
-                "CloudService": {
-                  "color": { "background": "#fb923c", "border": "#f97316", "highlight": { "background": "#fdba74", "border": "#f97316" } },
-                  "shape": "box",
-                  "font": { "color": "#1e1e2e" }
-                },
-                "Technology": {
-                  "color": { "background": "#3b82f6", "border": "#2563eb", "highlight": { "background": "#60a5fa", "border": "#2563eb" } },
-                  "shape": "box",
-                  "font": { "color": "#ffffff" }
-                },
-                "Vulnerability": {
-                  "color": { "background": "#ef4444", "border": "#dc2626", "highlight": { "background": "#f87171", "border": "#dc2626" } },
-                  "shape": "triangle",
-                  "font": { "color": "#cdd6f4" }
-                },
-                "Email": {
-                  "color": { "background": "#eab308", "border": "#ca8a04", "highlight": { "background": "#facc15", "border": "#ca8a04" } },
-                  "shape": "box",
-                  "font": { "color": "#1e1e2e" }
-                },
-                "Person": {
-                  "color": { "background": "#ec4899", "border": "#db2777", "highlight": { "background": "#f472b6", "border": "#db2777" } },
-                  "shape": "ellipse",
-                  "font": { "color": "#cdd6f4" }
-                },
-                "Directory": {
-                  "color": { "background": "#f59e0b", "border": "#d97706", "highlight": { "background": "#fbbf24", "border": "#d97706" } },
-                  "shape": "star",
-                  "font": { "color": "#1e1e2e" }
-                },
-                "Port": {
-                  "color": { "background": "#06b6d4", "border": "#0891b2", "highlight": { "background": "#22d3ee", "border": "#0891b2" } },
-                  "shape": "hexagon",
-                  "font": { "color": "#1e1e2e" }
-                },
-                "Service": {
-                  "color": { "background": "#0ea5e9", "border": "#0284c7", "highlight": { "background": "#38bdf8", "border": "#0284c7" } },
-                  "shape": "box",
-                  "font": { "color": "#ffffff" }
-                }
-              },
-              "nodes": {
-                "font": { "size": 16, "strokeWidth": 2, "color": "#cdd6f4" },
-                "scaling": { "min": 10, "max": 30 },
-                "borderWidth": 2,
-                "borderWidthSelected": 4
-              },
-              "edges": {
-                "color": { "inherit": false },
-                "smooth": { "type": "continuous", "forceDirection": "none" },
-                "font": {
-                  "size": 10,
-                  "color": "#6c7086",
-                  "align": "middle"
-                },
-                "arrows": {
-                  "to": {
-                    "enabled": true,
-                    "scaleFactor": 0.5
-                  }
-                }
-              },
-              "physics": {
-                "hierarchicalRepulsion": {
-                  "centralGravity": 0.0,
-                  "springLength": 180,
-                  "springConstant": 0.008,
-                  "nodeDistance": 220,
-                  "damping": 0.12,
-                  "avoidOverlap": 1
-                },
-                "maxVelocity": 40,
-                "solver": "hierarchicalRepulsion",
-                "timestep": 0.4,
-                "stabilization": { 
-                  "enabled": true,
-                  "iterations": 250,
-                  "updateInterval": 25
-                }
-              },
-              "layout": {
-                "hierarchical": {
-                  "enabled": true,
-                  "levelSeparation": 250,
-                  "nodeSpacing": 200,
-                  "treeSpacing": 300,
-                  "blockShifting": true,
-                  "edgeMinimization": true,
-                  "parentCentralization": true,
-                  "direction": "UD",
-                  "sortMethod": "directed"
-                }
-              },
-              "interaction": {
-                "hover": true,
-                "tooltipDelay": 200,
-                "hideEdgesOnDrag": true,
-                "navigationButtons": true,
-                "keyboard": {
-                  "enabled": true
-                }
-              }
-            }
-            """
-            net.set_options(options)
+        # Get node count for adaptive settings
+        node_count = self.graph.number_of_nodes()
+        
+        # Adaptive spacing - larger graphs need more space
+        if node_count > 200:
+            level_sep, node_spacing, tree_spacing = 380, 300, 420
+        elif node_count > 100:
+            level_sep, node_spacing, tree_spacing = 320, 260, 360
+        elif node_count > 50:
+            level_sep, node_spacing, tree_spacing = 280, 220, 320
+        else:
+            level_sep, node_spacing, tree_spacing = 250, 200, 300
+        
+        # STABLE CONFIGURATION - Physics runs ONCE then stops
+        options = f"""
+        var options = {{
+          "groups": {{
+            "Domain": {{ "color": {{ "background": "#6366f1", "border": "#4f46e5" }}, "shape": "diamond", "font": {{ "color": "#cdd6f4", "size": 16 }} }},
+            "Subdomain": {{ "color": {{ "background": "#8b5cf6", "border": "#7c3aed" }}, "shape": "dot", "font": {{ "color": "#cdd6f4", "size": 11 }} }},
+            "IP": {{ "color": {{ "background": "#22c55e", "border": "#16a34a" }}, "shape": "dot", "font": {{ "color": "#cdd6f4", "size": 11 }} }},
+            "IP_Cloud": {{ "color": {{ "background": "#f97316", "border": "#ea580c" }}, "shape": "dot", "font": {{ "color": "#cdd6f4", "size": 11 }} }},
+            "CloudService": {{ "color": {{ "background": "#fb923c", "border": "#f97316" }}, "shape": "box", "font": {{ "color": "#1e1e2e", "size": 11 }} }},
+            "Technology": {{ "color": {{ "background": "#3b82f6", "border": "#2563eb" }}, "shape": "box", "font": {{ "color": "#fff", "size": 10 }} }},
+            "Vulnerability": {{ "color": {{ "background": "#ef4444", "border": "#dc2626" }}, "shape": "triangle", "font": {{ "color": "#cdd6f4", "size": 10 }} }},
+            "Email": {{ "color": {{ "background": "#eab308", "border": "#ca8a04" }}, "shape": "box", "font": {{ "color": "#1e1e2e", "size": 10 }} }},
+            "Person": {{ "color": {{ "background": "#ec4899", "border": "#db2777" }}, "shape": "ellipse", "font": {{ "color": "#cdd6f4", "size": 10 }} }},
+            "Directory": {{ "color": {{ "background": "#f59e0b", "border": "#d97706" }}, "shape": "star", "font": {{ "color": "#1e1e2e", "size": 9 }} }},
+            "Port": {{ "color": {{ "background": "#06b6d4", "border": "#0891b2" }}, "shape": "hexagon", "font": {{ "color": "#1e1e2e", "size": 9 }} }},
+            "Service": {{ "color": {{ "background": "#0ea5e9", "border": "#0284c7" }}, "shape": "box", "font": {{ "color": "#fff", "size": 10 }} }}
+          }},
+          "nodes": {{
+            "font": {{ "size": 11, "strokeWidth": 0 }},
+            "scaling": {{ "min": 8, "max": 20 }},
+            "borderWidth": 1,
+            "borderWidthSelected": 2
+          }},
+          "edges": {{
+            "color": {{ "inherit": false, "opacity": 0.7 }},
+            "smooth": false,
+            "arrows": {{ "to": {{ "enabled": true, "scaleFactor": 0.3 }} }},
+            "width": 0.8
+          }},
+          "physics": {{
+            "enabled": true,
+            "hierarchicalRepulsion": {{
+              "centralGravity": 0,
+              "springLength": 200,
+              "springConstant": 0.01,
+              "nodeDistance": 180,
+              "damping": 0.3
+            }},
+            "solver": "hierarchicalRepulsion",
+            "stabilization": {{
+              "enabled": true,
+              "iterations": 200,
+              "updateInterval": 25,
+              "fit": true
+            }}
+          }},
+          "layout": {{
+            "hierarchical": {{
+              "enabled": true,
+              "levelSeparation": {level_sep},
+              "nodeSpacing": {node_spacing},
+              "treeSpacing": {tree_spacing},
+              "direction": "UD",
+              "sortMethod": "directed"
+            }}
+          }},
+          "interaction": {{
+            "hover": true,
+            "tooltipDelay": 100,
+            "hideEdgesOnDrag": false,
+            "hideEdgesOnZoom": false,
+            "dragNodes": true,
+            "dragView": true,
+            "zoomView": true
+          }}
+        }}
+        """
+        net.set_options(options)
 
         # Add nodes from NetworkX graph with group attribute for filtering
         for node, data in self.graph.nodes(data=True):
@@ -945,442 +896,183 @@ class AttackSurfaceGraph:
 
     def _inject_custom_javascript(self, filepath: Path) -> None:
         """
-        Inject custom filter sidebar JavaScript into the generated HTML.
-        Provides BloodHound-style node type filtering.
-        
-        Args:
-            filepath: Path to the HTML file to modify
+        Inject custom controls and STABLE physics management.
+        Physics is DISABLED after initial layout - no more moving nodes!
         """
-        # Filter sidebar HTML/CSS
-        filter_sidebar_html = '''
-        <!-- Filter Sidebar -->
-        <div id="filterSidebar" style="
-            position: absolute;
+        sidebar_html = '''
+        <!-- Control Panel -->
+        <div id="controlPanel" style="
+            position: fixed;
             top: 10px;
             left: 10px;
             background: rgba(30, 30, 46, 0.95);
             border: 1px solid #45475a;
             border-radius: 8px;
-            padding: 15px;
+            padding: 12px;
             color: #cdd6f4;
             font-family: 'Segoe UI', sans-serif;
-            font-size: 13px;
+            font-size: 12px;
             z-index: 1000;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
-            min-width: 200px;
-            max-height: 90vh;
+            width: 200px;
+            max-height: 85vh;
             overflow-y: auto;
         ">
-            <div style="font-weight: bold; margin-bottom: 12px; border-bottom: 1px solid #45475a; padding-bottom: 8px; display: flex; align-items: center;">
-                <span style="margin-right: 8px;">🔍</span> Filter Nodes
+            <div style="font-weight: bold; margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid #45475a;">
+                🎯 Graph Controls
             </div>
             
-            <!-- Search Input -->
-            <div style="margin-bottom: 12px;">
-                <input type="text" id="nodeSearch" placeholder="Search nodes..." oninput="searchNodes(this.value)" style="
-                    width: 100%;
-                    padding: 8px 10px;
-                    background: #313244;
-                    border: 1px solid #45475a;
-                    border-radius: 4px;
-                    color: #cdd6f4;
-                    font-size: 12px;
-                    outline: none;
-                    box-sizing: border-box;
-                " onfocus="this.style.borderColor='#3b82f6'" onblur="this.style.borderColor='#45475a'">
-                <div id="searchResults" style="font-size: 11px; color: #6c7086; margin-top: 4px;"></div>
+            <!-- Search -->
+            <input type="text" id="searchBox" placeholder="Search nodes..." style="
+                width: 100%; padding: 6px 8px; margin-bottom: 10px;
+                background: #313244; border: 1px solid #45475a; border-radius: 4px;
+                color: #cdd6f4; font-size: 11px; box-sizing: border-box;
+            ">
+            
+            <!-- Node Type Filters -->
+            <div style="margin-bottom: 10px;">
+                <div style="font-size: 11px; color: #6c7086; margin-bottom: 6px;">Filter by Type:</div>
+                <div id="filterList" style="display: flex; flex-direction: column; gap: 3px;"></div>
             </div>
             
-            <div class="filter-group" style="display: flex; flex-direction: column; gap: 6px;">
-                <label class="filter-item" style="display: flex; align-items: center; cursor: pointer; padding: 4px 8px; border-radius: 4px; transition: background 0.2s;">
-                    <input type="checkbox" id="filter-Domain" checked onchange="filterNodes()" style="margin-right: 10px; cursor: pointer;">
-                    <span style="color: #6366f1; margin-right: 6px;">◆</span> Domain
-                </label>
-                
-                <label class="filter-item" style="display: flex; align-items: center; cursor: pointer; padding: 4px 8px; border-radius: 4px; transition: background 0.2s;">
-                    <input type="checkbox" id="filter-Subdomain" checked onchange="filterNodes()" style="margin-right: 10px; cursor: pointer;">
-                    <span style="color: #8b5cf6; margin-right: 6px;">●</span> Subdomain
-                </label>
-                
-                <label class="filter-item" style="display: flex; align-items: center; cursor: pointer; padding: 4px 8px; border-radius: 4px; transition: background 0.2s;">
-                    <input type="checkbox" id="filter-IP" checked onchange="filterNodes()" style="margin-right: 10px; cursor: pointer;">
-                    <span style="color: #22c55e; margin-right: 6px;">●</span> IP
-                </label>
-                
-                <label class="filter-item" style="display: flex; align-items: center; cursor: pointer; padding: 4px 8px; border-radius: 4px; transition: background 0.2s;">
-                    <input type="checkbox" id="filter-CloudService" checked onchange="filterNodes()" style="margin-right: 10px; cursor: pointer;">
-                    <span style="color: #fb923c; margin-right: 6px;">■</span> Cloud
-                </label>
-                
-                <label class="filter-item" style="display: flex; align-items: center; cursor: pointer; padding: 4px 8px; border-radius: 4px; transition: background 0.2s;">
-                    <input type="checkbox" id="filter-Technology" checked onchange="filterNodes()" style="margin-right: 10px; cursor: pointer;">
-                    <span style="color: #3b82f6; margin-right: 6px;">■</span> Technology
-                </label>
-                
-                <label class="filter-item" style="display: flex; align-items: center; cursor: pointer; padding: 4px 8px; border-radius: 4px; transition: background 0.2s;">
-                    <input type="checkbox" id="filter-Vulnerability" checked onchange="filterNodes()" style="margin-right: 10px; cursor: pointer;">
-                    <span style="color: #ef4444; margin-right: 6px;">▲</span> Vulnerability
-                </label>
-                
-                <label class="filter-item" style="display: flex; align-items: center; cursor: pointer; padding: 4px 8px; border-radius: 4px; transition: background 0.2s;">
-                    <input type="checkbox" id="filter-Directory" checked onchange="filterNodes()" style="margin-right: 10px; cursor: pointer;">
-                    <span style="color: #f59e0b; margin-right: 6px;">★</span> Directory
-                </label>
-                
-                <label class="filter-item" style="display: flex; align-items: center; cursor: pointer; padding: 4px 8px; border-radius: 4px; transition: background 0.2s;">
-                    <input type="checkbox" id="filter-Port" checked onchange="filterNodes()" style="margin-right: 10px; cursor: pointer;">
-                    <span style="color: #06b6d4; margin-right: 6px;">⬡</span> Port
-                </label>
-                
-                <label class="filter-item" style="display: flex; align-items: center; cursor: pointer; padding: 4px 8px; border-radius: 4px; transition: background 0.2s;">
-                    <input type="checkbox" id="filter-Service" checked onchange="filterNodes()" style="margin-right: 10px; cursor: pointer;">
-                    <span style="color: #0ea5e9; margin-right: 6px;">■</span> Service
-                </label>
-                
-                <label class="filter-item" style="display: flex; align-items: center; cursor: pointer; padding: 4px 8px; border-radius: 4px; transition: background 0.2s;">
-                    <input type="checkbox" id="filter-Email" checked onchange="filterNodes()" style="margin-right: 10px; cursor: pointer;">
-                    <span style="color: #eab308; margin-right: 6px;">■</span> Email
-                </label>
-                
-                <label class="filter-item" style="display: flex; align-items: center; cursor: pointer; padding: 4px 8px; border-radius: 4px; transition: background 0.2s;">
-                    <input type="checkbox" id="filter-Person" checked onchange="filterNodes()" style="margin-right: 10px; cursor: pointer;">
-                    <span style="color: #ec4899; margin-right: 6px;">●</span> Person
-                </label>
+            <!-- View Buttons -->
+            <div style="display: flex; gap: 4px; margin-bottom: 8px;">
+                <button onclick="showAll()" style="flex:1; padding: 5px; background: #3b82f6; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 10px;">Show All</button>
+                <button onclick="fitView()" style="flex:1; padding: 5px; background: #45475a; color: #cdd6f4; border: none; border-radius: 3px; cursor: pointer; font-size: 10px;">Fit View</button>
             </div>
             
-            <div style="margin-top: 12px; padding-top: 10px; border-top: 1px solid #45475a;">
-                <button onclick="showAllNodes()" style="
-                    width: 100%;
-                    padding: 8px 12px;
-                    background: #3b82f6;
-                    color: white;
-                    border: none;
-                    border-radius: 4px;
-                    cursor: pointer;
-                    font-size: 12px;
-                    transition: background 0.2s;
-                " onmouseover="this.style.background='#2563eb'" onmouseout="this.style.background='#3b82f6'">
-                    Show All
-                </button>
-                <button onclick="hideAllNodes()" style="
-                    width: 100%;
-                    padding: 8px 12px;
-                    margin-top: 6px;
-                    background: #45475a;
-                    color: #cdd6f4;
-                    border: none;
-                    border-radius: 4px;
-                    cursor: pointer;
-                    font-size: 12px;
-                    transition: background 0.2s;
-                " onmouseover="this.style.background='#585b70'" onmouseout="this.style.background='#45475a'">
-                    Hide All
-                </button>
+            <!-- Zoom -->
+            <div style="display: flex; gap: 4px; margin-bottom: 10px;">
+                <button onclick="zoomIn()" style="flex:1; padding: 5px; background: #45475a; color: #cdd6f4; border: none; border-radius: 3px; cursor: pointer; font-size: 10px;">+ Zoom</button>
+                <button onclick="zoomOut()" style="flex:1; padding: 5px; background: #45475a; color: #cdd6f4; border: none; border-radius: 3px; cursor: pointer; font-size: 10px;">- Zoom</button>
             </div>
             
-            <div style="margin-top: 10px; padding-top: 8px; border-top: 1px solid #45475a; font-size: 11px; color: #6c7086;">
-                <span id="visibleCount">All nodes visible</span>
-            </div>
-            
-            <!-- Layout Toggle Section -->
-            <div style="margin-top: 12px; padding-top: 10px; border-top: 1px solid #45475a;">
-                <div style="font-weight: bold; margin-bottom: 8px; font-size: 12px;">📐 Layout Mode</div>
-                <div style="display: flex; gap: 6px;">
-                    <button id="btn-hierarchical" onclick="setLayout('hierarchical')" style="
-                        flex: 1;
-                        padding: 6px 8px;
-                        background: #3b82f6;
-                        color: white;
-                        border: none;
-                        border-radius: 4px;
-                        cursor: pointer;
-                        font-size: 11px;
-                        transition: all 0.2s;
-                    ">
-                        🌳 Tree
-                    </button>
-                    <button id="btn-force" onclick="setLayout('force')" style="
-                        flex: 1;
-                        padding: 6px 8px;
-                        background: #45475a;
-                        color: #cdd6f4;
-                        border: none;
-                        border-radius: 4px;
-                        cursor: pointer;
-                        font-size: 11px;
-                        transition: all 0.2s;
-                    ">
-                        🕸️ Force
-                    </button>
-                </div>
+            <!-- Stats -->
+            <div style="padding-top: 8px; border-top: 1px solid #45475a; font-size: 10px; color: #6c7086;">
+                <span id="statsDisplay">Loading...</span>
             </div>
         </div>
         
         <style>
-            .filter-item:hover {
-                background: rgba(69, 71, 90, 0.5);
-            }
-            #filterSidebar::-webkit-scrollbar {
-                width: 6px;
-            }
-            #filterSidebar::-webkit-scrollbar-track {
-                background: #1e1e2e;
-            }
-            #filterSidebar::-webkit-scrollbar-thumb {
-                background: #45475a;
-                border-radius: 3px;
-            }
-            #filterSidebar::-webkit-scrollbar-thumb:hover {
-                background: #585b70;
-            }
-            #nodeSearch::placeholder {
-                color: #6c7086;
-            }
+            #controlPanel::-webkit-scrollbar { width: 5px; }
+            #controlPanel::-webkit-scrollbar-thumb { background: #45475a; border-radius: 3px; }
+            .filter-cb { display: flex; align-items: center; gap: 6px; padding: 2px 4px; cursor: pointer; border-radius: 3px; }
+            .filter-cb:hover { background: rgba(255,255,255,0.05); }
+            .filter-cb input { cursor: pointer; }
         </style>
         '''
-
-        # Filter JavaScript function
-        filter_script = '''
-        <script type="text/javascript">
-            // Store original node data for restoration
-            var originalNodes = null;
-            var originalEdges = null;
-            var searchQuery = '';
+        
+        script = '''
+        <script>
+        (function() {
+            // Wait for vis.js to be ready
+            var checkReady = setInterval(function() {
+                if (typeof network !== 'undefined' && typeof nodes !== 'undefined') {
+                    clearInterval(checkReady);
+                    initGraph();
+                }
+            }, 100);
             
-            // Initialize on page load
-            document.addEventListener('DOMContentLoaded', function() {
-                // Wait for network to be ready
+            function initGraph() {
+                var allNodes = nodes.get();
+                var allEdges = edges.get();
+                
+                // IMMEDIATELY disable physics after stabilization - NO MORE MOVING!
+                network.once('stabilizationIterationsDone', function() {
+                    network.setOptions({ physics: { enabled: false } });
+                    console.log('Layout stabilized - physics disabled for smooth experience');
+                });
+                
+                // Also disable after a timeout as fallback
                 setTimeout(function() {
-                    if (typeof nodes !== 'undefined' && typeof edges !== 'undefined') {
-                        originalNodes = nodes.get();
-                        originalEdges = edges.get();
-                        updateVisibleCount();
-                    }
-                }, 500);
-            });
-            
-            // Search nodes by label
-            function searchNodes(query) {
-                searchQuery = query.toLowerCase().trim();
+                    network.setOptions({ physics: { enabled: false } });
+                }, 3000);
                 
-                if (!originalNodes) {
-                    originalNodes = nodes.get();
-                    originalEdges = edges.get();
-                }
+                // Update stats
+                document.getElementById('statsDisplay').textContent = 
+                    'Nodes: ' + allNodes.length + ' | Edges: ' + allEdges.length;
                 
-                applyFilters();
+                // Build filter checkboxes
+                var types = {};
+                var colors = {
+                    'Domain': '#6366f1', 'Subdomain': '#8b5cf6', 'IP': '#22c55e', 'IP_Cloud': '#f97316',
+                    'CloudService': '#fb923c', 'Technology': '#3b82f6', 'Vulnerability': '#ef4444',
+                    'Email': '#eab308', 'Person': '#ec4899', 'Directory': '#f59e0b', 'Port': '#06b6d4', 'Service': '#0ea5e9'
+                };
                 
-                // Update search results indicator
-                var resultsDiv = document.getElementById('searchResults');
-                if (searchQuery) {
-                    var matchCount = originalNodes.filter(function(node) {
-                        return (node.label || '').toLowerCase().includes(searchQuery) || 
-                               (node.id || '').toLowerCase().includes(searchQuery);
-                    }).length;
-                    resultsDiv.textContent = matchCount + ' matches found';
-                } else {
-                    resultsDiv.textContent = '';
-                }
-            }
-            
-            // Filter nodes based on checkbox states and search query
-            function filterNodes() {
-                applyFilters();
-            }
-            
-            // Apply both type filters and search filter
-            function applyFilters() {
-                if (!originalNodes) {
-                    originalNodes = nodes.get();
-                    originalEdges = edges.get();
-                }
-                
-                var nodeTypes = ['Domain', 'Subdomain', 'IP', 'CloudService', 'Technology', 'Vulnerability', 'Directory', 'Port', 'Service', 'Email', 'Person'];
-                var visibleTypes = [];
-                
-                nodeTypes.forEach(function(type) {
-                    var checkbox = document.getElementById('filter-' + type);
-                    if (checkbox && checkbox.checked) {
-                        visibleTypes.push(type);
-                    }
+                allNodes.forEach(function(n) {
+                    var t = n.group || 'Unknown';
+                    types[t] = (types[t] || 0) + 1;
                 });
                 
-                // Update node visibility based on type and search
-                var updatedNodes = originalNodes.map(function(node) {
-                    var nodeGroup = node.group || 'Unknown';
-                    // Handle IP_Cloud as IP
-                    if (nodeGroup === 'IP_Cloud') nodeGroup = 'IP';
+                var filterList = document.getElementById('filterList');
+                Object.keys(types).sort().forEach(function(type) {
+                    var color = colors[type] || '#888';
+                    var div = document.createElement('label');
+                    div.className = 'filter-cb';
+                    div.innerHTML = '<input type="checkbox" checked data-type="' + type + '">' +
+                        '<span style="color:' + color + '">●</span> ' + type + ' (' + types[type] + ')';
+                    filterList.appendChild(div);
+                });
+                
+                // Filter change handler
+                filterList.addEventListener('change', applyFilters);
+                
+                // Search handler
+                document.getElementById('searchBox').addEventListener('input', applyFilters);
+                
+                function applyFilters() {
+                    var search = document.getElementById('searchBox').value.toLowerCase();
+                    var checkedTypes = [];
+                    document.querySelectorAll('#filterList input:checked').forEach(function(cb) {
+                        checkedTypes.push(cb.dataset.type);
+                    });
                     
-                    var typeVisible = visibleTypes.includes(nodeGroup);
+                    var hiddenNodes = new Set();
                     
-                    // Apply search filter if query exists
-                    var searchVisible = true;
-                    if (searchQuery) {
-                        var nodeLabel = (node.label || '').toLowerCase();
-                        var nodeId = (node.id || '').toLowerCase();
-                        searchVisible = nodeLabel.includes(searchQuery) || nodeId.includes(searchQuery);
-                    }
+                    allNodes.forEach(function(n) {
+                        var typeMatch = checkedTypes.includes(n.group || 'Unknown');
+                        var searchMatch = !search || (n.label || '').toLowerCase().includes(search) || (n.id || '').toLowerCase().includes(search);
+                        var hidden = !(typeMatch && searchMatch);
+                        nodes.update({ id: n.id, hidden: hidden });
+                        if (hidden) hiddenNodes.add(n.id);
+                    });
                     
-                    return {
-                        id: node.id,
-                        hidden: !(typeVisible && searchVisible)
-                    };
-                });
-                
-                // Apply updates
-                nodes.update(updatedNodes);
-                
-                // Update edge visibility (hide edges connected to hidden nodes)
-                var hiddenNodeIds = new Set();
-                updatedNodes.forEach(function(node) {
-                    if (node.hidden) {
-                        hiddenNodeIds.add(node.id);
-                    }
-                });
-                
-                var updatedEdges = originalEdges.map(function(edge) {
-                    var isHidden = hiddenNodeIds.has(edge.from) || hiddenNodeIds.has(edge.to);
-                    return {
-                        id: edge.id,
-                        hidden: isHidden
-                    };
-                });
-                
-                edges.update(updatedEdges);
-                
-                // Focus on matched nodes if searching
-                if (searchQuery) {
-                    var visibleNodes = updatedNodes.filter(function(n) { return !n.hidden; });
-                    if (visibleNodes.length > 0 && visibleNodes.length <= 5) {
-                        network.fit({
-                            nodes: visibleNodes.map(function(n) { return n.id; }),
-                            animation: true
-                        });
-                    }
+                    allEdges.forEach(function(e) {
+                        var hidden = hiddenNodes.has(e.from) || hiddenNodes.has(e.to);
+                        edges.update({ id: e.id, hidden: hidden });
+                    });
                 }
                 
-                updateVisibleCount();
-            }
-            
-            // Update visible count display
-            function updateVisibleCount() {
-                if (!originalNodes) return;
+                // Global functions
+                window.showAll = function() {
+                    document.getElementById('searchBox').value = '';
+                    document.querySelectorAll('#filterList input').forEach(function(cb) { cb.checked = true; });
+                    allNodes.forEach(function(n) { nodes.update({ id: n.id, hidden: false }); });
+                    allEdges.forEach(function(e) { edges.update({ id: e.id, hidden: false }); });
+                };
                 
-                var visibleNodes = nodes.get().filter(function(n) { return !n.hidden; });
-                document.getElementById('visibleCount').textContent = visibleNodes.length + ' of ' + originalNodes.length + ' nodes';
-            }
-            
-            // Show all nodes
-            function showAllNodes() {
-                var checkboxes = document.querySelectorAll('#filterSidebar input[type="checkbox"]');
-                checkboxes.forEach(function(cb) { cb.checked = true; });
-                document.getElementById('nodeSearch').value = '';
-                searchQuery = '';
-                document.getElementById('searchResults').textContent = '';
-                filterNodes();
-            }
-            
-            // Hide all nodes
-            function hideAllNodes() {
-                var checkboxes = document.querySelectorAll('#filterSidebar input[type="checkbox"]');
-                checkboxes.forEach(function(cb) { cb.checked = false; });
-                filterNodes();
-            }
-            
-            // Layout configurations
-            var hierarchicalLayout = {
-                physics: {
-                    hierarchicalRepulsion: {
-                        centralGravity: 0.0,
-                        springLength: 180,
-                        springConstant: 0.008,
-                        nodeDistance: 220,
-                        damping: 0.12,
-                        avoidOverlap: 1
-                    },
-                    maxVelocity: 40,
-                    solver: 'hierarchicalRepulsion',
-                    timestep: 0.4,
-                    stabilization: { enabled: true, iterations: 250, updateInterval: 25 }
-                },
-                layout: {
-                    hierarchical: {
-                        enabled: true,
-                        levelSeparation: 250,
-                        nodeSpacing: 200,
-                        treeSpacing: 300,
-                        blockShifting: true,
-                        edgeMinimization: true,
-                        parentCentralization: true,
-                        direction: 'UD',
-                        sortMethod: 'directed'
-                    }
-                }
-            };
-            
-            var forceLayout = {
-                physics: {
-                    forceAtlas2Based: {
-                        gravitationalConstant: -100,
-                        centralGravity: 0.008,
-                        springLength: 250,
-                        springConstant: 0.06,
-                        avoidOverlap: 0.9
-                    },
-                    maxVelocity: 40,
-                    solver: 'forceAtlas2Based',
-                    timestep: 0.3,
-                    stabilization: { enabled: true, iterations: 200, updateInterval: 25 }
-                },
-                layout: {
-                    hierarchical: {
-                        enabled: false
-                    }
-                }
-            };
-            
-            var currentLayout = 'hierarchical';
-            
-            // Switch layout mode
-            function setLayout(mode) {
-                if (!network) return;
+                window.fitView = function() {
+                    network.fit({ animation: { duration: 300 } });
+                };
                 
-                currentLayout = mode;
+                window.zoomIn = function() {
+                    network.moveTo({ scale: network.getScale() * 1.3, animation: { duration: 200 } });
+                };
                 
-                var btnHierarchical = document.getElementById('btn-hierarchical');
-                var btnForce = document.getElementById('btn-force');
-                
-                if (mode === 'hierarchical') {
-                    network.setOptions(hierarchicalLayout);
-                    btnHierarchical.style.background = '#3b82f6';
-                    btnHierarchical.style.color = 'white';
-                    btnForce.style.background = '#45475a';
-                    btnForce.style.color = '#cdd6f4';
-                } else {
-                    network.setOptions(forceLayout);
-                    btnForce.style.background = '#3b82f6';
-                    btnForce.style.color = 'white';
-                    btnHierarchical.style.background = '#45475a';
-                    btnHierarchical.style.color = '#cdd6f4';
-                }
-                
-                // Re-stabilize the network
-                network.stabilize(150);
+                window.zoomOut = function() {
+                    network.moveTo({ scale: network.getScale() * 0.7, animation: { duration: 200 } });
+                };
             }
+        })();
         </script>
         '''
-
+        
         try:
             content = filepath.read_text(encoding="utf-8")
-            
-            # Insert filter sidebar before closing body tag
-            content = content.replace("</body>", f"{filter_sidebar_html}{filter_script}</body>")
-            
+            content = content.replace("</body>", sidebar_html + script + "</body>")
             filepath.write_text(content, encoding="utf-8")
-            self.logger.debug("Injected filter sidebar JavaScript")
-            
         except Exception as e:
-            self.logger.warning(f"Could not inject filter sidebar: {e}")
+            self.logger.warning(f"Could not inject controls: {e}")
 
     def export_json(self, filename: str) -> Path:
         """

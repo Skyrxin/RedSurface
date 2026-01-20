@@ -373,8 +373,8 @@ class ActiveRecon:
         """
         Orchestrate all active reconnaissance methods.
         
-        CRITICAL: This method checks if mode is ACTIVE before running.
-        If mode is not ACTIVE, it returns immediately with empty results.
+        CRITICAL: This method checks if mode is ACTIVE or CUSTOM with active modules enabled.
+        If mode is PASSIVE, it returns immediately with empty results.
         
         Args:
             target: Target instance with domain and discovered assets
@@ -383,68 +383,76 @@ class ActiveRecon:
             ActiveReconResults with all findings
         """
         # CRITICAL: Check mode before any active operations
-        if self.config.mode != ScanMode.ACTIVE:
-            self.logger.info("[Active Recon] Skipped - scan mode is PASSIVE")
+        # Allow ACTIVE mode or CUSTOM mode with active modules enabled
+        if not self._is_active_mode():
+            self.logger.info("[Active Recon] Skipped - no active modules enabled")
             return self.results
         
+        mode_str = "CUSTOM" if self.config.mode == ScanMode.CUSTOM else "ACTIVE"
         self.logger.info("=" * 50)
-        self.logger.info("[Active Recon] Starting active reconnaissance")
+        self.logger.info(f"[Active Recon] Starting active reconnaissance ({mode_str} mode)")
         self.logger.warning("[!] Active mode enabled - direct target interaction")
         self.logger.info("=" * 50)
         
-        # Phase 1: DNS Zone Transfer
-        self.logger.info("\n[Phase 1] DNS Zone Transfer Attempt")
-        zone_subdomains = self.zone_transfer(target.domain)
+        # Phase 1: DNS Zone Transfer (only if enabled)
+        if self._should_run_zone_transfer():
+            self.logger.info("\n[Phase 1] DNS Zone Transfer Attempt")
+            zone_subdomains = self.zone_transfer(target.domain)
+            
+            # Add discovered subdomains to target
+            if zone_subdomains:
+                target.subdomains.update(zone_subdomains)
+                self.logger.info(f"Added {len(zone_subdomains)} subdomains from zone transfer")
+        else:
+            self.logger.debug("[Phase 1] Zone Transfer skipped - not enabled")
         
-        # Add discovered subdomains to target
-        if zone_subdomains:
-            target.subdomains.update(zone_subdomains)
-            self.logger.info(f"Added {len(zone_subdomains)} subdomains from zone transfer")
-        
-        # Phase 2: Directory Enumeration
-        self.logger.info("\n[Phase 2] Directory Enumeration")
-        
-        # Build list of URLs to enumerate
-        urls_to_enum = []
-        
-        # Main domain
-        urls_to_enum.append(f"https://{target.domain}")
-        urls_to_enum.append(f"http://{target.domain}")
-        
-        # Discovered subdomains (limit to avoid too many requests)
-        MAX_SUBDOMAINS_TO_ENUM = 10
-        subdomains_list = list(target.subdomains)[:MAX_SUBDOMAINS_TO_ENUM]
-        
-        for subdomain in subdomains_list:
-            urls_to_enum.append(f"https://{subdomain}")
-        
-        # Also check any discovered web services from fingerprinting
-        if hasattr(target, "services"):
-            for ip, services in target.services.items():
-                for service in services:
-                    if service.get("service") in ["http", "https"]:
-                        port = service.get("port", 80)
-                        scheme = "https" if port == 443 or service.get("service") == "https" else "http"
-                        urls_to_enum.append(f"{scheme}://{ip}:{port}")
-        
-        # Deduplicate
-        urls_to_enum = list(set(urls_to_enum))
-        self.logger.info(f"Enumerating {len(urls_to_enum)} URLs")
-        
-        # Run directory enumeration on each URL
-        wordlist_path = str(self.config.wordlist_dirs) if self.config.wordlist_dirs else None
-        
-        for url in urls_to_enum:
-            try:
-                await self.directory_enum(url, wordlist_path)
-            except Exception as e:
-                self.logger.debug(f"Directory enum failed for {url}: {e}")
+        # Phase 2: Directory Enumeration (only if enabled)
+        if self._should_run_dir_enum():
+            self.logger.info("\n[Phase 2] Directory Enumeration")
+            
+            # Build list of URLs to enumerate
+            urls_to_enum = []
+            
+            # Main domain
+            urls_to_enum.append(f"https://{target.domain}")
+            urls_to_enum.append(f"http://{target.domain}")
+            
+            # Discovered subdomains (limit to avoid too many requests)
+            MAX_SUBDOMAINS_TO_ENUM = 10
+            subdomains_list = list(target.subdomains)[:MAX_SUBDOMAINS_TO_ENUM]
+            
+            for subdomain in subdomains_list:
+                urls_to_enum.append(f"https://{subdomain}")
+            
+            # Also check any discovered web services from fingerprinting
+            if hasattr(target, "services"):
+                for ip, services in target.services.items():
+                    for service in services:
+                        if service.get("service") in ["http", "https"]:
+                            port = service.get("port", 80)
+                            scheme = "https" if port == 443 or service.get("service") == "https" else "http"
+                            urls_to_enum.append(f"{scheme}://{ip}:{port}")
+            
+            # Deduplicate
+            urls_to_enum = list(set(urls_to_enum))
+            self.logger.info(f"Enumerating {len(urls_to_enum)} URLs")
+            
+            # Run directory enumeration on each URL
+            wordlist_path = str(self.config.wordlist_dirs) if self.config.wordlist_dirs else None
+            
+            for url in urls_to_enum:
+                try:
+                    await self.directory_enum(url, wordlist_path)
+                except Exception as e:
+                    self.logger.debug(f"Directory enum failed for {url}: {e}")
+        else:
+            self.logger.debug("[Phase 2] Directory Enumeration skipped - not enabled")
         
         # Summary
         total_dirs = sum(len(d) for d in self.results.discovered_directories.values())
         self.logger.info("=" * 50)
         self.logger.info("[Active Recon] Complete")
-        self.logger.info(f"  Zone Transfer: {'SUCCESS' if self.results.zone_transfer_success else 'Denied'}")
+        self.logger.info(f"  Zone Transfer: {'SUCCESS' if self.results.zone_transfer_success else 'Denied/Skipped'}")
         self.logger.info(f"  Subdomains from AXFR: {len(self.results.zone_transfer_subdomains)}")
         self.logger.info(f"  Interesting Paths: {total_dirs}")
         self.logger.info("=" * 50)

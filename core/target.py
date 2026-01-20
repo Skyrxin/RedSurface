@@ -37,6 +37,15 @@ class Target:
     port_intel: Dict[str, Dict[str, Any]] = field(default_factory=dict)  # IP -> port intel data
     scan_start: Optional[datetime] = None
     scan_end: Optional[datetime] = None
+    
+    # Enhanced data fields
+    ssl_certificates: Dict[str, Dict[str, Any]] = field(default_factory=dict)  # hostname -> SSL cert info
+    technology_details: Dict[str, List[Dict[str, Any]]] = field(default_factory=dict)  # host -> [full tech details]
+    infrastructure_assets: Dict[str, Dict[str, Any]] = field(default_factory=dict)  # hostname -> asset details
+    active_recon_results: Dict[str, Any] = field(default_factory=dict)  # zone transfer, etc.
+    dns_records: Dict[str, Dict[str, List[str]]] = field(default_factory=dict)  # hostname -> {A: [], CNAME: [], etc.}
+    scan_config_used: Dict[str, Any] = field(default_factory=dict)  # scan configuration used
+    http_responses: Dict[str, Dict[str, Any]] = field(default_factory=dict)  # hostname -> HTTP response info
 
     def __post_init__(self) -> None:
         """Normalize domain on initialization."""
@@ -160,20 +169,83 @@ class Target:
         """Add port intelligence data for an IP address."""
         self.port_intel[ip] = intel_data
 
+    def add_ssl_certificate(self, hostname: str, cert_info: Dict[str, Any]) -> None:
+        """Add SSL certificate information for a hostname."""
+        self.ssl_certificates[hostname.lower().strip()] = cert_info
+
+    def add_technology_detail(self, host: str, tech_detail: Dict[str, Any]) -> None:
+        """Add detailed technology fingerprint to a host."""
+        host = host.lower().strip()
+        if host not in self.technology_details:
+            self.technology_details[host] = []
+        self.technology_details[host].append(tech_detail)
+
+    def add_infrastructure_asset(self, hostname: str, asset_data: Dict[str, Any]) -> None:
+        """Add infrastructure asset details."""
+        self.infrastructure_assets[hostname.lower().strip()] = asset_data
+
+    def set_active_recon_results(self, results: Dict[str, Any]) -> None:
+        """Set active reconnaissance results (zone transfer, etc.)."""
+        self.active_recon_results = results
+
+    def add_dns_records(self, hostname: str, record_type: str, records: List[str]) -> None:
+        """Add DNS records for a hostname."""
+        hostname = hostname.lower().strip()
+        if hostname not in self.dns_records:
+            self.dns_records[hostname] = {}
+        self.dns_records[hostname][record_type] = records
+
+    def set_scan_config(self, config_dict: Dict[str, Any]) -> None:
+        """Store the scan configuration used."""
+        self.scan_config_used = config_dict
+
+    def add_http_response(self, hostname: str, response_info: Dict[str, Any]) -> None:
+        """Add HTTP response information for a hostname."""
+        self.http_responses[hostname.lower().strip()] = response_info
+
     def to_dict(self) -> dict:
-        """Export target state to dictionary."""
+        """Export target state to dictionary with all collected data."""
         return {
+            "meta": {
+                "domain": self.domain,
+                "scan_start": self.scan_start.isoformat() if self.scan_start else None,
+                "scan_end": self.scan_end.isoformat() if self.scan_end else None,
+                "scan_duration_seconds": self.scan_duration,
+                "scan_config": self.scan_config_used,
+            },
+            "summary": {
+                "subdomains_count": len(self.subdomains),
+                "ips_count": len(set(ip for ips in self.ips.values() for ip in ips)),
+                "technologies_count": sum(len(t) for t in self.technologies.values()),
+                "vulnerabilities_count": sum(len(v) for v in self.vulnerabilities.values()),
+                "emails_count": len(self.emails),
+                "people_count": len(self.people),
+                "directories_count": sum(len(d) for d in self.discovered_directories.values()),
+                "ports_count": sum(len(h.get("ports", [])) for h in self.port_intel.values()),
+                "cloud_services_count": len(self.cloud_services),
+            },
             "domain": self.domain,
-            "subdomains": list(self.subdomains),
-            "ips": self.ips,
-            "technologies": self.technologies,
-            "cloud_services": self.cloud_services,
-            "vulnerabilities": self.vulnerabilities,
-            "emails": sorted(list(self.emails)),
-            "people": self.people,
-            "discovered_directories": self.discovered_directories,
-            "port_intel": self.port_intel,
-            "scan_start": self.scan_start.isoformat() if self.scan_start else None,
-            "scan_end": self.scan_end.isoformat() if self.scan_end else None,
-            "scan_duration_seconds": self.scan_duration,
+            "subdomains": sorted(list(self.subdomains)),
+            "infrastructure": {
+                "ip_mappings": self.ips,
+                "dns_records": self.dns_records,
+                "ssl_certificates": self.ssl_certificates,
+                "assets": self.infrastructure_assets,
+                "cloud_services": self.cloud_services,
+            },
+            "fingerprinting": {
+                "technologies": self.technologies,
+                "technology_details": self.technology_details,
+                "vulnerabilities": self.vulnerabilities,
+            },
+            "osint": {
+                "emails": sorted(list(self.emails)),
+                "people": self.people,
+            },
+            "active_recon": {
+                "zone_transfer": self.active_recon_results.get("zone_transfer", {}),
+                "directory_enumeration": self.discovered_directories,
+            },
+            "port_intelligence": self.port_intel,
+            "http_responses": self.http_responses,
         }

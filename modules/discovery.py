@@ -244,7 +244,7 @@ class InfrastructureDiscoverer:
                 self._resolver.nameservers = self.dns_servers
             # If dns_servers is None, it will use system default from /etc/resolv.conf
             self._resolver.timeout = self.timeout
-            self._resolver.lifetime = self.timeout * 2
+            self._resolver.lifetime = self.timeout  # Same as timeout for faster failure
         return self._resolver
 
     async def resolve_dns(self, hostname: str) -> DiscoveredAsset:
@@ -327,7 +327,7 @@ class InfrastructureDiscoverer:
                 return provider
         return None
 
-    async def discover_subdomains_crtsh(self, domain: str) -> Set[str]:
+    async def discover_subdomains_crtsh(self, domain: str, max_retries: int = 3) -> Set[str]:
         """
         Discover subdomains using crt.sh certificate transparency logs.
         
@@ -336,6 +336,7 @@ class InfrastructureDiscoverer:
 
         Args:
             domain: Target domain
+            max_retries: Maximum number of retry attempts
 
         Returns:
             Set of discovered subdomains
@@ -344,43 +345,119 @@ class InfrastructureDiscoverer:
         
         self.logger.debug(f"Querying crt.sh for {domain} subdomains...")
         
+        # Configure timeouts specifically for crt.sh (it's slow)
+        timeout_config = httpx.Timeout(
+            connect=30.0,    # Connection timeout
+            read=90.0,       # Read timeout (crt.sh can be very slow)
+            write=10.0,      # Write timeout
+            pool=10.0,       # Pool timeout
+        )
+        
+        for attempt in range(max_retries):
+            try:
+                async with httpx.AsyncClient(
+                    timeout=timeout_config,
+                    follow_redirects=True,
+                    http2=False,  # Disable HTTP/2 for better compatibility
+                ) as client:
+                    url = f"https://crt.sh/?q=%.{domain}&output=json"
+                    response = await client.get(url)
+                    
+                    if response.status_code == 200:
+                        try:
+                            certs = response.json()
+                            
+                            for cert in certs:
+                                # Extract name_value which contains domain names
+                                name_value = cert.get("name_value", "")
+                                
+                                # Split by newlines (crt.sh can return multiple names)
+                                for name in name_value.split("\n"):
+                                    name = name.strip().lower()
+                                    
+                                    # Skip wildcards and ensure it's a valid subdomain
+                                    if name.startswith("*."):
+                                        name = name[2:]
+                                    
+                                    # Verify it's under our target domain
+                                    if name.endswith(f".{domain}") or name == domain:
+                                        if name != domain:  # Don't add root domain
+                                            subdomains.add(name)
+                            
+                            self.logger.info(f"crt.sh: Found {len(subdomains)} unique subdomains")
+                            return subdomains  # Success, return results
+                            
+                        except Exception as e:
+                            self.logger.debug(f"crt.sh JSON parse error: {e}")
+                            return subdomains
+                    elif response.status_code in (502, 503, 504):
+                        # Server error, retry
+                        self.logger.debug(f"crt.sh returned {response.status_code}, retrying ({attempt + 1}/{max_retries})...")
+                        if attempt < max_retries - 1:
+                            await asyncio.sleep(3 * (attempt + 1))  # Exponential backoff
+                            continue
+                    else:
+                        self.logger.debug(f"crt.sh returned status {response.status_code}")
+                        return subdomains
+                        
+            except httpx.TimeoutException:
+                self.logger.debug(f"crt.sh timeout for {domain}, retrying ({attempt + 1}/{max_retries})...")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(5)  # Longer wait for timeout
+                    continue
+            except httpx.ConnectError as e:
+                self.logger.debug(f"crt.sh connection error: {e}, retrying ({attempt + 1}/{max_retries})...")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(5 * (attempt + 1))  # Longer backoff for connection issues
+                    continue
+            except Exception as e:
+                self.logger.debug(f"crt.sh error: {e}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(3)
+                    continue
+        
+        self.logger.warning(f"crt.sh failed after {max_retries} attempts, trying alternative sources...")
+        
+        # Try alternative: CertSpotter API (free, no auth required for basic queries)
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                url = f"https://crt.sh/?q=%.{domain}&output=json"
+            async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+                url = f"https://api.certspotter.com/v1/issuances?domain={domain}&include_subdomains=true&expand=dns_names"
                 response = await client.get(url)
                 
                 if response.status_code == 200:
-                    try:
-                        certs = response.json()
-                        
-                        for cert in certs:
-                            # Extract name_value which contains domain names
-                            name_value = cert.get("name_value", "")
-                            
-                            # Split by newlines (crt.sh can return multiple names)
-                            for name in name_value.split("\n"):
-                                name = name.strip().lower()
-                                
-                                # Skip wildcards and ensure it's a valid subdomain
-                                if name.startswith("*."):
-                                    name = name[2:]
-                                
-                                # Verify it's under our target domain
-                                if name.endswith(f".{domain}") or name == domain:
-                                    if name != domain:  # Don't add root domain
-                                        subdomains.add(name)
-                        
-                        self.logger.info(f"crt.sh: Found {len(subdomains)} unique subdomains")
-                        
-                    except Exception as e:
-                        self.logger.debug(f"crt.sh JSON parse error: {e}")
-                else:
-                    self.logger.debug(f"crt.sh returned status {response.status_code}")
+                    certs = response.json()
+                    for cert in certs:
+                        dns_names = cert.get("dns_names", [])
+                        for name in dns_names:
+                            name = name.strip().lower()
+                            if name.startswith("*."):
+                                name = name[2:]
+                            if name.endswith(f".{domain}") and name != domain:
+                                subdomains.add(name)
                     
-        except httpx.TimeoutException:
-            self.logger.debug(f"crt.sh timeout for {domain}")
+                    if subdomains:
+                        self.logger.info(f"CertSpotter: Found {len(subdomains)} unique subdomains")
+                        return subdomains
         except Exception as e:
-            self.logger.debug(f"crt.sh error: {e}")
+            self.logger.debug(f"CertSpotter fallback failed: {e}")
+        
+        # Last resort: try hackertarget (free API)
+        try:
+            async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
+                url = f"https://api.hackertarget.com/hostsearch/?q={domain}"
+                response = await client.get(url)
+                
+                if response.status_code == 200 and "error" not in response.text.lower():
+                    for line in response.text.strip().split("\n"):
+                        if "," in line:
+                            subdomain = line.split(",")[0].strip().lower()
+                            if subdomain.endswith(f".{domain}") and subdomain != domain:
+                                subdomains.add(subdomain)
+                    
+                    if subdomains:
+                        self.logger.info(f"HackerTarget: Found {len(subdomains)} unique subdomains")
+        except Exception as e:
+            self.logger.debug(f"HackerTarget fallback failed: {e}")
         
         return subdomains
 
