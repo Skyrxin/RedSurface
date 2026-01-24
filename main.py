@@ -25,23 +25,22 @@ from modules.fingerprint import TechFingerprinter, TechFingerprint
 from modules.osint import OSINTCollector, OSINTResults
 from modules.active_recon import ActiveRecon, ActiveReconResults
 from modules.port_intel import PortIntel, PortIntelResults
+from modules.phishing import PhishingSimulator, create_targets_from_osint
 from utils.report_generator import ReportGenerator
 
 
 # ASCII Banner
 BANNER = r"""
-╔═══════════════════════════════════════════════════════════════════════════╗
-║                                                                           ║
-║   ██████╗ ███████╗██████╗ ███████╗██╗   ██╗██████╗ ███████╗ █████╗  ██████╗███████╗ ║
-║   ██╔══██╗██╔════╝██╔══██╗██╔════╝██║   ██║██╔══██╗██╔════╝██╔══██╗██╔════╝██╔════╝ ║
-║   ██████╔╝█████╗  ██║  ██║███████╗██║   ██║██████╔╝█████╗  ███████║██║     █████╗   ║
-║   ██╔══██╗██╔══╝  ██║  ██║╚════██║██║   ██║██╔══██╗██╔══╝  ██╔══██║██║     ██╔══╝   ║
-║   ██║  ██║███████╗██████╔╝███████║╚██████╔╝██║  ██║██║     ██║  ██║╚██████╗███████╗ ║
-║   ╚═╝  ╚═╝╚══════╝╚═════╝ ╚══════╝ ╚═════╝ ╚═╝  ╚═╝╚═╝     ╚═╝  ╚═╝ ╚═════╝╚══════╝ ║
-║                                                                           ║
-║              Attack Surface Intelligence Graph Generator                  ║
-║                              v1.3.0                                       ║
-╚═══════════════════════════════════════════════════════════════════════════╝
+
+  ██████╗ ███████╗██████╗ ███████╗██╗   ██╗██████╗ ███████╗ █████╗  ██████╗███████╗
+  ██╔══██╗██╔════╝██╔══██╗██╔════╝██║   ██║██╔══██╗██╔════╝██╔══██╗██╔════╝██╔════╝
+  ██████╔╝█████╗  ██║  ██║███████╗██║   ██║██████╔╝█████╗  ███████║██║     █████╗  
+  ██╔══██╗██╔══╝  ██║  ██║╚════██║██║   ██║██╔══██╗██╔══╝  ██╔══██║██║     ██╔══╝  
+  ██║  ██║███████╗██████╔╝███████║╚██████╔╝██║  ██║██║     ██║  ██║╚██████╗███████╗
+  ╚═╝  ╚═╝╚══════╝╚═════╝ ╚══════╝ ╚═════╝ ╚═╝  ╚═╝╚═╝     ╚═╝  ╚═╝ ╚═════╝╚══════╝
+                                                                                   
+              Attack Surface Intelligence Graph Generator  v1.4.0
+                                                                                   
 """
 
 
@@ -212,6 +211,47 @@ Examples:
         "--no-report",
         action="store_true",
         help="Skip HTML report generation (only output JSON and graph)",
+    )
+    
+    # Phishing simulation arguments
+    parser.add_argument(
+        "--phishing",
+        action="store_true",
+        help="Launch phishing simulation using discovered emails (requires SMTP config)",
+    )
+    
+    parser.add_argument(
+        "--smtp-host",
+        type=str,
+        default="smtp.mailtrap.io",
+        help="SMTP server hostname for phishing simulation",
+    )
+    
+    parser.add_argument(
+        "--smtp-port",
+        type=int,
+        default=2525,
+        help="SMTP server port for phishing simulation",
+    )
+    
+    parser.add_argument(
+        "--smtp-user",
+        type=str,
+        help="SMTP username for phishing simulation",
+    )
+    
+    parser.add_argument(
+        "--smtp-pass",
+        type=str,
+        help="SMTP password for phishing simulation",
+    )
+    
+    parser.add_argument(
+        "--phishing-template",
+        type=str,
+        choices=["security_alert", "password_expiry", "document_share", "it_support"],
+        default="security_alert",
+        help="Email template for phishing campaign",
     )
 
     return parser.parse_args()
@@ -514,6 +554,14 @@ async def run_reconnaissance(
     use_system_dns: bool = True,  # Default to system DNS for better network compatibility
     scan_config: ScanConfig | None = None,
     generate_report: bool = True,
+    # Phishing simulation parameters
+    run_phishing: bool = False,
+    smtp_host: str = "smtp.mailtrap.io",
+    smtp_port: int = 2525,
+    smtp_user: str | None = None,
+    smtp_pass: str | None = None,
+    phishing_template: str = "security_alert",
+    phishing_landing_page: str = "security_alert",
 ) -> AttackSurfaceGraph:
     """
     Main reconnaissance orchestration function.
@@ -534,6 +582,13 @@ async def run_reconnaissance(
         use_system_dns: Use system default DNS instead of public DNS
         scan_config: Optional ScanConfig for advanced settings
         generate_report: Whether to generate HTML report
+        run_phishing: Whether to run phishing simulation
+        smtp_host: SMTP server for phishing
+        smtp_port: SMTP port for phishing
+        smtp_user: SMTP username for phishing
+        smtp_pass: SMTP password for phishing
+        phishing_template: Email template for phishing
+        phishing_landing_page: Landing page template for phishing
 
     Returns:
         Populated AttackSurfaceGraph instance
@@ -696,16 +751,70 @@ async def run_reconnaissance(
     else:
         logger.info("[Phase 7] Port intelligence skipped (no Shodan API key)")
 
+    # Phase 8: Phishing Simulation (optional)
+    if run_phishing and target.emails and smtp_user and smtp_pass:
+        logger.info("[Phase 8] Phishing simulation...")
+        logger.warning("⚠️  PHISHING MODULE - For authorized testing only!")
+        
+        # Create phishing simulator
+        phishing_sim = PhishingSimulator(
+            smtp_host=smtp_host,
+            smtp_port=smtp_port,
+            smtp_username=smtp_user,
+            smtp_password=smtp_pass,
+            tracking_host=f"http://127.0.0.1:5000",
+            company_name=target.domain.split('.')[0].capitalize(),
+        )
+        
+        # Start tracking listener with the selected landing page
+        phishing_sim.start_listener(port=5000, landing_template=phishing_landing_page)
+        
+        # Create targets from discovered emails
+        phishing_targets = create_targets_from_osint(
+            emails=list(target.emails),
+            people=list(target.people),
+        )
+        
+        if phishing_targets:
+            # Create and launch campaign
+            phishing_sim.create_campaign(
+                name=f"{target.domain}_recon_campaign",
+                targets=phishing_targets,
+                template=phishing_template,
+                landing_page=phishing_landing_page,
+            )
+            
+            phishing_sim.send_campaign(
+                sender_email=f"security@{target.domain}",
+                sender_name="IT Security",
+            )
+            
+            # Export phishing report
+            phishing_sim.export_report(output_dir)
+            
+            logger.info(f"Phishing: Campaign sent to {len(phishing_targets)} targets")
+            logger.info(f"Phishing: Tracking server running at http://127.0.0.1:5000")
+            logger.info(f"Phishing: Check /status endpoint for real-time results")
+        else:
+            logger.warning("Phishing: No valid targets found from OSINT")
+    elif run_phishing:
+        if not target.emails:
+            logger.info("[Phase 8] Phishing skipped (no emails discovered)")
+        else:
+            logger.info("[Phase 8] Phishing skipped (SMTP credentials not configured)")
+    else:
+        logger.info("[Phase 8] Phishing simulation skipped")
+
     # Mark scan complete
     target.end_scan()
     logger.info(f"{'=' * 60}")
     logger.info(f"Reconnaissance completed in {target.scan_duration:.2f} seconds")
     logger.info(f"{'=' * 60}")
 
-    # Phase 8: Build Graph (sync - NetworkX operations)
+    # Phase 9: Build Graph (sync - NetworkX operations)
     attack_graph = phase_graph_building(target)
 
-    # Phase 9: Export Results (sync - file I/O)
+    # Phase 10: Export Results (sync - file I/O)
     phase_export(target, attack_graph, output_dir, generate_report=generate_report)
 
     return attack_graph
@@ -798,22 +907,71 @@ def main() -> int:
             logger.info(f"{'='*60}")
 
         try:
+            # Determine phishing parameters - from wizard config or CLI args
+            if getattr(args, 'interactive', False) and scan_config:
+                run_phishing = getattr(scan_config, 'module_phishing', False)
+                smtp_host = getattr(scan_config, 'smtp_host', 'smtp.mailtrap.io')
+                smtp_port = getattr(scan_config, 'smtp_port', 2525)
+                smtp_user = getattr(scan_config, 'smtp_username', None)
+                smtp_pass = getattr(scan_config, 'smtp_password', None)
+                phishing_template = getattr(scan_config, 'phishing_template', 'security_alert')
+                phishing_landing_page = getattr(scan_config, 'phishing_landing_page', 'security_alert')
+            else:
+                run_phishing = getattr(args, 'phishing', False)
+                smtp_host = getattr(args, 'smtp_host', 'smtp.mailtrap.io')
+                smtp_port = getattr(args, 'smtp_port', 2525)
+                smtp_user = getattr(args, 'smtp_user', None)
+                smtp_pass = getattr(args, 'smtp_pass', None)
+                phishing_template = getattr(args, 'phishing_template', 'security_alert')
+                phishing_landing_page = phishing_template  # Default to same as email template
+            
+            # Determine API keys - from wizard config or CLI args
+            if getattr(args, 'interactive', False) and scan_config:
+                hunter_key = getattr(scan_config, 'hunter_api_key', None)
+                github_token = getattr(scan_config, 'github_token', None)
+                hibp_key = getattr(scan_config, 'hibp_api_key', None)
+                nvd_key = getattr(scan_config, 'nvd_api_key', None)
+                skip_osint = getattr(scan_config, 'skip_osint', False)
+                verify_emails = getattr(scan_config, 'verify_emails', False)
+                generate_permutations = getattr(scan_config, 'generate_permutations', False)
+                use_system_dns = getattr(scan_config, 'use_system_dns', True)
+                # Use NVD by default (API key optional but recommended for higher rate limits)
+                use_nvd = getattr(scan_config, 'module_vuln_lookup', True)
+            else:
+                hunter_key = args.hunter_key
+                github_token = args.github_token
+                hibp_key = args.hibp_key
+                nvd_key = args.nvd_key
+                skip_osint = args.skip_osint
+                verify_emails = args.verify_emails
+                generate_permutations = args.generate_permutations
+                use_system_dns = args.use_system_dns
+                use_nvd = not args.no_nvd
+            
             attack_graph = asyncio.run(
                 run_reconnaissance(
                     target=target,
                     output_dir=output_dir,
-                    hunter_key=args.hunter_key,
-                    github_token=args.github_token,
-                    hibp_key=args.hibp_key,
-                    generate_permutations=args.generate_permutations,
-                    verify_emails=args.verify_emails,
-                    skip_osint=args.skip_osint,
-                    nvd_key=args.nvd_key,
-                    use_nvd=not args.no_nvd,
+                    hunter_key=hunter_key,
+                    github_token=github_token,
+                    hibp_key=hibp_key,
+                    generate_permutations=generate_permutations,
+                    verify_emails=verify_emails,
+                    skip_osint=skip_osint,
+                    nvd_key=nvd_key,
+                    use_nvd=use_nvd,
                     analyze_content=not args.no_content_analysis,
-                    use_system_dns=args.use_system_dns,
+                    use_system_dns=use_system_dns,
                     scan_config=scan_config,
                     generate_report=not args.no_report,
+                    # Phishing parameters
+                    run_phishing=run_phishing,
+                    smtp_host=smtp_host,
+                    smtp_port=smtp_port,
+                    smtp_user=smtp_user,
+                    smtp_pass=smtp_pass,
+                    phishing_template=phishing_template,
+                    phishing_landing_page=phishing_landing_page,
                 )
             )
             total_success += 1

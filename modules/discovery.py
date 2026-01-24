@@ -202,8 +202,8 @@ class InfrastructureDiscoverer:
     def __init__(
         self,
         wordlist: Optional[List[str]] = None,
-        timeout: float = 3.0,
-        max_concurrent: int = 50,
+        timeout: float = 5.0,
+        max_concurrent: int = 30,
         dns_servers: Optional[List[str]] = None,
         use_crtsh: bool = True,
         analyze_ssl: bool = True,
@@ -243,9 +243,43 @@ class InfrastructureDiscoverer:
             if self.dns_servers:
                 self._resolver.nameservers = self.dns_servers
             # If dns_servers is None, it will use system default from /etc/resolv.conf
+            # timeout = per-DNS-server query timeout
+            # lifetime = total time allowed for entire resolution (including retries)
             self._resolver.timeout = self.timeout
-            self._resolver.lifetime = self.timeout  # Same as timeout for faster failure
+            self._resolver.lifetime = self.timeout * 3  # Allow retries across DNS servers
         return self._resolver
+
+    async def _resolve_with_retry(
+        self, 
+        resolver: dns.asyncresolver.Resolver, 
+        hostname: str, 
+        rdtype: str,
+        max_retries: int = 2
+    ):
+        """
+        Resolve DNS with retry on timeout.
+        
+        Args:
+            resolver: DNS resolver instance
+            hostname: Hostname to resolve
+            rdtype: DNS record type (A, AAAA, CNAME)
+            max_retries: Maximum retry attempts
+            
+        Returns:
+            DNS response or None on failure
+        """
+        for attempt in range(max_retries + 1):
+            try:
+                return await resolver.resolve(hostname, rdtype)
+            except dns.exception.Timeout:
+                if attempt < max_retries:
+                    # Small delay before retry
+                    await asyncio.sleep(0.5)
+                    continue
+                raise
+            except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN):
+                raise  # Don't retry these - they're definitive answers
+        return None
 
     async def resolve_dns(self, hostname: str) -> DiscoveredAsset:
         """
@@ -262,14 +296,15 @@ class InfrastructureDiscoverer:
 
         # Resolve CNAME records first
         try:
-            cname_response = await resolver.resolve(hostname, "CNAME")
-            for rdata in cname_response:
-                cname = str(rdata.target).rstrip(".")
-                asset.cnames.append(cname)
-                # Detect cloud provider from CNAME
-                provider = self.detect_cloud_provider(cname)
-                if provider and provider not in asset.cloud_providers:
-                    asset.cloud_providers.append(provider)
+            cname_response = await self._resolve_with_retry(resolver, hostname, "CNAME")
+            if cname_response:
+                for rdata in cname_response:
+                    cname = str(rdata.target).rstrip(".")
+                    asset.cnames.append(cname)
+                    # Detect cloud provider from CNAME
+                    provider = self.detect_cloud_provider(cname)
+                    if provider and provider not in asset.cloud_providers:
+                        asset.cloud_providers.append(provider)
         except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN):
             pass  # No CNAME record, that's okay
         except dns.exception.Timeout:
@@ -279,12 +314,13 @@ class InfrastructureDiscoverer:
 
         # Resolve A records (IPv4)
         try:
-            a_response = await resolver.resolve(hostname, "A")
-            for rdata in a_response:
-                ip = str(rdata.address)
-                if ip not in asset.ips:
-                    asset.ips.append(ip)
-            asset.is_alive = True
+            a_response = await self._resolve_with_retry(resolver, hostname, "A")
+            if a_response:
+                for rdata in a_response:
+                    ip = str(rdata.address)
+                    if ip not in asset.ips:
+                        asset.ips.append(ip)
+                asset.is_alive = True
         except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN):
             pass  # No A record
         except dns.exception.Timeout:
@@ -296,12 +332,13 @@ class InfrastructureDiscoverer:
 
         # Resolve AAAA records (IPv6)
         try:
-            aaaa_response = await resolver.resolve(hostname, "AAAA")
-            for rdata in aaaa_response:
-                ip = str(rdata.address)
-                if ip not in asset.ips:
-                    asset.ips.append(ip)
-            asset.is_alive = True
+            aaaa_response = await self._resolve_with_retry(resolver, hostname, "AAAA")
+            if aaaa_response:
+                for rdata in aaaa_response:
+                    ip = str(rdata.address)
+                    if ip not in asset.ips:
+                        asset.ips.append(ip)
+                asset.is_alive = True
         except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN):
             pass  # No AAAA record
         except dns.exception.Timeout:

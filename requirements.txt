@@ -5,4 +5,4 @@ pyvis>=0.3.2
 dnspython>=2.4.0
 aiofiles>=23.2.1
 shodan>=1.28.0
-questionary>=2.0.0
+questionary>=2.0.0flask>=3.0.0

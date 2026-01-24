@@ -94,6 +94,18 @@ class InteractiveWizard:
                 if module_selection is None:
                     return None, []
             
+            # Step 2b: Phishing Configuration (if Phishing mode OR Custom mode with phishing selected)
+            phishing_config = {}
+            if scan_mode == ScanMode.PHISHING or module_selection.get("module_phishing", False):
+                phishing_config = self._configure_phishing()
+                if phishing_config is None:
+                    # If phishing config cancelled but in Custom mode, just disable phishing
+                    if scan_mode == ScanMode.CUSTOM:
+                        module_selection["module_phishing"] = False
+                        print("  ○ Phishing disabled (authorization not confirmed)\n")
+                    else:
+                        return None, []
+            
             # Step 3: Target Selection
             targets = self._select_targets()
             if not targets:
@@ -116,10 +128,11 @@ class InteractiveWizard:
             github_token = None
             hibp_key = None
             
-            if scan_mode != ScanMode.CUSTOM or module_selection.get("module_port_scan", False):
+            if scan_mode not in (ScanMode.CUSTOM, ScanMode.PHISHING) or module_selection.get("module_port_scan", False):
                 shodan_key = self._get_shodan_key()
             
-            if scan_mode != ScanMode.CUSTOM or module_selection.get("module_email_discovery", False):
+            # Always ask for OSINT keys in PHISHING mode (we need emails)
+            if scan_mode == ScanMode.PHISHING or scan_mode != ScanMode.CUSTOM or module_selection.get("module_email_discovery", False):
                 hunter_key = self._get_hunter_key()
                 hibp_key = self._get_hibp_key()
                 github_token = self._get_github_token()
@@ -127,9 +140,9 @@ class InteractiveWizard:
             if scan_mode != ScanMode.CUSTOM or module_selection.get("module_vuln_lookup", False):
                 nvd_key = self._get_nvd_key()
             
-            # Step 7: OSINT Options (if OSINT enabled)
+            # Step 7: OSINT Options (if OSINT enabled - always for PHISHING mode)
             osint_options = {}
-            if scan_mode != ScanMode.CUSTOM or module_selection.get("module_email_discovery", False):
+            if scan_mode == ScanMode.PHISHING or scan_mode != ScanMode.CUSTOM or module_selection.get("module_email_discovery", False):
                 osint_options = self._get_osint_options()
             
             # Step 8: Output Directory
@@ -139,8 +152,15 @@ class InteractiveWizard:
             options = self._get_additional_options()
             
             # Build ScanConfig with module selections
+            # Determine if phishing is enabled (from Phishing mode OR Custom mode selection)
+            phishing_enabled = scan_mode == ScanMode.PHISHING or module_selection.get("module_phishing", False)
+            
+            # Remove module_phishing from module_selection to avoid duplicate kwarg
+            if "module_phishing" in module_selection:
+                del module_selection["module_phishing"]
+            
             self.config = ScanConfig(
-                mode=scan_mode,
+                mode=scan_mode if scan_mode != ScanMode.PHISHING else ScanMode.PASSIVE,  # Phishing uses passive recon
                 wordlist_dirs=Path(wordlist_dirs) if wordlist_dirs else None,
                 wordlist_subdomains=Path(wordlist_subs) if wordlist_subs else None,
                 scope_blacklist=scope_blacklist,
@@ -155,6 +175,14 @@ class InteractiveWizard:
                 generate_permutations=osint_options.get("generate_permutations", False),
                 verbose=options.get("verbose", False),
                 output_dir=output_dir,
+                # Phishing configuration
+                module_phishing=phishing_enabled,
+                smtp_host=phishing_config.get("smtp_host", "smtp.mailtrap.io"),
+                smtp_port=phishing_config.get("smtp_port", 2525),
+                smtp_username=phishing_config.get("smtp_username"),
+                smtp_password=phishing_config.get("smtp_password"),
+                phishing_template=phishing_config.get("phishing_template", "security_alert"),
+                phishing_landing_page=phishing_config.get("landing_page", "security_alert"),
                 # Custom module selections
                 **module_selection,
             )
@@ -184,6 +212,10 @@ class InteractiveWizard:
                 value=ScanMode.ACTIVE,
             ),
             questionary.Choice(
+                title="� Phishing - Recon + Phishing simulation campaign",
+                value=ScanMode.PHISHING,
+            ),
+            questionary.Choice(
                 title="🎛️  Custom - Select specific modules to run",
                 value=ScanMode.CUSTOM,
             ),
@@ -197,13 +229,13 @@ class InteractiveWizard:
         ).ask()
         
         if mode:
-            if mode == ScanMode.PASSIVE:
-                mode_name = "PASSIVE"
-            elif mode == ScanMode.ACTIVE:
-                mode_name = "ACTIVE"
-            else:
-                mode_name = "CUSTOM"
-            print(f"  ✓ Mode: {mode_name}\n")
+            mode_names = {
+                ScanMode.PASSIVE: "PASSIVE",
+                ScanMode.ACTIVE: "ACTIVE",
+                ScanMode.PHISHING: "PHISHING",
+                ScanMode.CUSTOM: "CUSTOM",
+            }
+            print(f"  ✓ Mode: {mode_names.get(mode, 'UNKNOWN')}\n")
         
         return mode
     
@@ -345,16 +377,36 @@ class InteractiveWizard:
         if port_selected is None:
             return None
         
+        # Phishing Simulation
+        print("\n  🎣 Phishing Simulation (Requires authorization)")
+        phishing_choices = [
+            questionary.Choice(
+                title="🎣 Phishing Campaign (send simulated phishing emails)",
+                value="module_phishing",
+                checked=False,
+            ),
+        ]
+        
+        phishing_selected = questionary.checkbox(
+            "Phishing Module (⚠️  requires explicit authorization):",
+            choices=phishing_choices,
+            style=WIZARD_STYLE,
+            instruction="(Space to select, Enter to confirm)",
+        ).ask()
+        
+        if phishing_selected is None:
+            return None
+        
         # Build module selection dict
         all_modules = [
             "module_subdomain_enum", "module_dns_resolution", "module_ssl_analysis",
             "module_tech_detection", "module_waf_detection", "module_vuln_lookup",
             "module_email_discovery", "module_people_discovery",
             "module_zone_transfer", "module_dir_enum",
-            "module_port_scan",
+            "module_port_scan", "module_phishing",
         ]
         
-        selected = set(discovery_selected + fingerprint_selected + osint_selected + active_selected + port_selected)
+        selected = set(discovery_selected + fingerprint_selected + osint_selected + active_selected + port_selected + phishing_selected)
         module_selection = {mod: (mod in selected) for mod in all_modules}
         
         # Count selected
@@ -372,9 +424,174 @@ class InteractiveWizard:
             print(f"    Active Recon:   {', '.join([m.replace('module_', '').replace('_', ' ').title() for m in active_selected])}")
         if port_selected:
             print(f"    Port Intel:     {', '.join([m.replace('module_', '').replace('_', ' ').title() for m in port_selected])}")
+        if phishing_selected:
+            print(f"    Phishing:       🎣 Campaign Enabled")
         print()
         
         return module_selection
+    
+    def _configure_phishing(self) -> Optional[dict]:
+        """
+        Configure phishing simulation settings.
+        
+        Returns:
+            Dictionary with phishing configuration
+        """
+        print("\n" + "=" * 60)
+        print("  🎣 PHISHING SIMULATION CONFIGURATION")
+        print("=" * 60)
+        print("\n  ⚠️  WARNING: For AUTHORIZED security testing only!")
+        print("  Ensure you have written permission before proceeding.\n")
+        
+        # Confirm authorization
+        authorized = questionary.confirm(
+            "Do you have explicit written authorization for this test?",
+            default=False,
+            style=WIZARD_STYLE,
+        ).ask()
+        
+        if not authorized:
+            print("\n  [!] Authorization required. Cannot proceed with phishing.\n")
+            return None
+        
+        print("\n  📧 SMTP Configuration")
+        print("  " + "-" * 40)
+        
+        # SMTP Host
+        smtp_host = questionary.text(
+            "SMTP Server Host:",
+            default="smtp.mailtrap.io",
+            style=WIZARD_STYLE,
+        ).ask()
+        
+        if smtp_host is None:
+            return None
+        
+        # SMTP Port
+        smtp_port_str = questionary.text(
+            "SMTP Server Port:",
+            default="2525",
+            style=WIZARD_STYLE,
+        ).ask()
+        
+        if smtp_port_str is None:
+            return None
+        
+        try:
+            smtp_port = int(smtp_port_str)
+        except ValueError:
+            smtp_port = 2525
+        
+        # SMTP Username
+        smtp_username = questionary.text(
+            "SMTP Username:",
+            style=WIZARD_STYLE,
+        ).ask()
+        
+        if smtp_username is None:
+            return None
+        
+        # SMTP Password
+        smtp_password = questionary.password(
+            "SMTP Password:",
+            style=WIZARD_STYLE,
+        ).ask()
+        
+        if smtp_password is None:
+            return None
+        
+        print("\n  📝 Email Template")
+        print("  " + "-" * 40)
+        
+        # Template selection
+        template_choices = [
+            questionary.Choice(
+                title="🔒 Security Alert - Suspicious login attempt",
+                value="security_alert",
+            ),
+            questionary.Choice(
+                title="⏰ Password Expiry - Password update required",
+                value="password_expiry",
+            ),
+            questionary.Choice(
+                title="📄 Document Share - Shared document notification",
+                value="document_share",
+            ),
+            questionary.Choice(
+                title="🛠️ IT Support - Account verification request",
+                value="it_support",
+            ),
+        ]
+        
+        phishing_template = questionary.select(
+            "Select Phishing Email Template:",
+            choices=template_choices,
+            style=WIZARD_STYLE,
+        ).ask()
+        
+        if phishing_template is None:
+            return None
+        
+        # Landing page selection
+        print("\n  🌐 Landing Page")
+        print("  " + "-" * 40)
+        
+        landing_choices = [
+            questionary.Choice(
+                title="✨ Auto-Match - Use landing page matching email template (Recommended)",
+                value=phishing_template,  # Auto-match to selected email template
+            ),
+            questionary.Choice(
+                title="🔒 Security Alert - Account verification page",
+                value="security_alert",
+            ),
+            questionary.Choice(
+                title="🔐 Password Update - Password expiry page",
+                value="password_expiry",
+            ),
+            questionary.Choice(
+                title="📄 Document View - Shared document login",
+                value="document_share",
+            ),
+            questionary.Choice(
+                title="🛡️ IT Support - IT verification portal",
+                value="it_support",
+            ),
+            questionary.Choice(
+                title="🔷 Generic - Simple corporate login",
+                value="generic",
+            ),
+            questionary.Choice(
+                title="🪟 Microsoft - Microsoft 365 style",
+                value="microsoft",
+            ),
+            questionary.Choice(
+                title="🔴 Google - Google Workspace style",
+                value="google",
+            ),
+        ]
+        
+        landing_page = questionary.select(
+            "Select Landing Page Template:",
+            choices=landing_choices,
+            style=WIZARD_STYLE,
+        ).ask()
+        
+        if landing_page is None:
+            return None
+        
+        print(f"\n  ✓ SMTP Server: {smtp_host}:{smtp_port}")
+        print(f"  ✓ Template: {phishing_template}")
+        print(f"  ✓ Landing Page: {landing_page}\n")
+        
+        return {
+            "smtp_host": smtp_host,
+            "smtp_port": smtp_port,
+            "smtp_username": smtp_username,
+            "smtp_password": smtp_password,
+            "phishing_template": phishing_template,
+            "landing_page": landing_page,
+        }
     
     def _select_targets(self) -> List[Target]:
         """Prompt user to select target(s)."""
@@ -656,6 +873,8 @@ class InteractiveWizard:
             mode_name = "PASSIVE"
         elif self.config.mode == ScanMode.ACTIVE:
             mode_name = "ACTIVE"
+        elif getattr(self.config, 'module_phishing', False):
+            mode_name = "PHISHING"
         else:
             mode_name = "CUSTOM"
         
@@ -720,6 +939,10 @@ class InteractiveWizard:
             # Port Intel
             if getattr(self.config, 'module_port_scan', False):
                 print(f"  Port Intel:     🔌 Shodan Lookup")
+            
+            # Phishing (in Custom mode)
+            if getattr(self.config, 'module_phishing', False):
+                print(f"  Phishing:       🎣 Campaign Enabled")
         
         # API Keys
         print("\n  --- API Keys ---")
@@ -737,6 +960,15 @@ class InteractiveWizard:
         print(f"  System DNS:     {'Yes' if self.config.use_system_dns else 'No'}")
         print(f"  Verbose:        {'Yes' if getattr(self.config, 'verbose', False) else 'No'}")
         print(f"  Output:         {getattr(self.config, 'output_dir', './output')}")
+        
+        # Phishing Configuration
+        if getattr(self.config, 'module_phishing', False):
+            print("\n  --- Phishing Configuration ---")
+            print(f"  SMTP Host:      {getattr(self.config, 'smtp_host', 'smtp.mailtrap.io')}")
+            print(f"  SMTP Port:      {getattr(self.config, 'smtp_port', 2525)}")
+            print(f"  SMTP User:      {'✓ Configured' if getattr(self.config, 'smtp_username', None) else '○ Not set'}")
+            print(f"  SMTP Pass:      {'✓ Configured' if getattr(self.config, 'smtp_password', None) else '○ Not set'}")
+            print(f"  Template:       {getattr(self.config, 'phishing_template', 'security_alert')}")
         
         print("=" * 60 + "\n")
         

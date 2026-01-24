@@ -335,6 +335,11 @@ class TechFingerprinter:
         
         # Cache for NVD results to avoid duplicate lookups
         self._nvd_cache: Dict[str, List[Dict]] = {}
+        
+        # Rate limiting for NVD API (without key: 5 req/30s, with key: 50 req/30s)
+        self._nvd_rate_limit = 50 if nvd_api_key else 5
+        self._nvd_request_count = 0
+        self._nvd_rate_limit_hit = False
 
     async def analyze_headers(
         self,
@@ -508,6 +513,20 @@ class TechFingerprinter:
 
         if not self.use_nvd:
             return []
+        
+        # Skip if we've hit rate limit
+        if self._nvd_rate_limit_hit:
+            return []
+        
+        # Check rate limit (without key: 5 req/30s, with key: 50 req/30s)
+        if self._nvd_request_count >= self._nvd_rate_limit:
+            if not self._nvd_rate_limit_hit:
+                self._nvd_rate_limit_hit = True
+                self.logger.warning(
+                    f"NVD API rate limit reached ({self._nvd_rate_limit} requests). "
+                    f"{'Tip: Use --nvd-key for higher limits (50 req/30s)' if not self.nvd_api_key else 'Using mock database for remaining lookups.'}"
+                )
+            return []
 
         cves = []
         
@@ -525,6 +544,12 @@ class TechFingerprinter:
             headers = {"Accept": "application/json"}
             if self.nvd_api_key:
                 headers["apiKey"] = self.nvd_api_key
+            
+            # Add delay between requests to avoid rate limiting
+            if self._nvd_request_count > 0:
+                await asyncio.sleep(0.5)  # Small delay between requests
+            
+            self._nvd_request_count += 1
             
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.get(
@@ -573,7 +598,8 @@ class TechFingerprinter:
                         self.logger.debug(f"Found CVE: {cve_id} ({severity})")
                 
                 elif response.status_code == 403:
-                    self.logger.warning("NVD API rate limited. Consider using --nvd-key")
+                    self._nvd_rate_limit_hit = True
+                    self.logger.warning("NVD API rate limited (403). Consider using --nvd-key for higher limits.")
                 else:
                     self.logger.debug(f"NVD API returned status {response.status_code}")
                     

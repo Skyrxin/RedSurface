@@ -13,9 +13,10 @@ import re
 
 class ScanMode(Enum):
     """Scan mode enumeration."""
-    PASSIVE = "passive"  # Only passive reconnaissance (no direct interaction)
-    ACTIVE = "active"    # Active scanning (direct requests, fuzzing, etc.)
-    CUSTOM = "custom"    # Custom mode with user-selected modules
+    PASSIVE = "passive"    # Only passive reconnaissance (no direct interaction)
+    ACTIVE = "active"      # Active scanning (direct requests, fuzzing, etc.)
+    CUSTOM = "custom"      # Custom mode with user-selected modules
+    PHISHING = "phishing"  # Recon + Phishing simulation campaign
 
 
 # Default wordlists (relative to project root or absolute paths)
@@ -87,6 +88,15 @@ class ScanConfig:
     
     # Port Intelligence
     module_port_scan: bool = False          # Shodan port lookup
+    
+    # Phishing Simulation
+    module_phishing: bool = False           # Phishing simulation module
+    smtp_host: str = "smtp.mailtrap.io"
+    smtp_port: int = 2525
+    smtp_username: Optional[str] = None
+    smtp_password: Optional[str] = None
+    phishing_template: str = "security_alert"
+    phishing_landing_page: str = "security_alert"  # Landing page template
 
     def __post_init__(self) -> None:
         """Initialize default wordlist paths if not provided."""
@@ -235,6 +245,7 @@ class ScanConfig:
                 "zone_transfer": self.module_zone_transfer,
                 "dir_enum": self.module_dir_enum,
                 "port_scan": self.module_port_scan,
+                "phishing": self.module_phishing,
             }
         
         return config_dict
