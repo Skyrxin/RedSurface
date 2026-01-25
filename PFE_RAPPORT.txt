@@ -1,0 +1,2831 @@
+================================================================================
+================================================================================
+                                                                                
+                     FINAL YEAR PROJECT (PFE)
+                                                                                
+                          TECHNICAL REPORT
+                                                                                
+================================================================================
+================================================================================
+
+
+                              REDSURFACE v1.4.0
+                Attack Surface Intelligence Graph Generator
+                
+                     External Reconnaissance Tool and
+                      Attack Surface Mapping System
+
+
+================================================================================
+                          GENERAL INFORMATION
+================================================================================
+
+    Project Title       :  Mini Red Team Project - RedSurface
+    Type                :  Final Year Project (PFE)
+    Domain              :  Cybersecurity / Red Team Operations
+    Date                :  January 2026
+    Version             :  1.4.0
+    Main Language       :  Python 3.9+
+    Repository          :  https://github.com/Skyrxin/RedSurface
+
+
+================================================================================
+================================================================================
+                            TABLE OF CONTENTS
+================================================================================
+================================================================================
+
+    PART I      -  CONTEXT AND PROBLEM STATEMENT
+    
+        1.1  General Introduction
+        1.2  Project Context
+        1.3  Problem Statement
+        1.4  Project Objectives
+        1.5  Scope and Limitations
+    
+    PART II     -  STATE OF THE ART
+    
+        2.1  Reconnaissance in Cybersecurity
+        2.2  Red Team Methodologies
+        2.3  Existing Tools
+        2.4  RedSurface Positioning
+    
+    PART III    -  DESIGN AND ARCHITECTURE
+    
+        3.1  Global Architecture
+        3.2  Technology Choices
+        3.3  Modular Design
+        3.4  Data Flow
+        3.5  Data Model
+    
+    PART IV     -  TECHNICAL IMPLEMENTATION
+    
+        4.1  Discovery Module (Infrastructure Discovery)
+        4.2  Fingerprint Module (Technology Fingerprinting)
+        4.3  OSINT Module (Open Source Intelligence)
+        4.4  Active Recon Module (Active Reconnaissance)
+        4.5  Port Intel Module (Port Intelligence)
+        4.6  Phishing Module (Phishing Simulation)
+        4.7  Graph Engine and Visualization
+        4.8  User Interface (CLI & Wizard)
+    
+    PART V      -  RESULTS AND TESTING
+    
+        5.1  Test Scenarios
+        5.2  Obtained Results
+        5.3  Performance and Optimization
+        5.4  Identified Limitations
+    
+    PART VI     -  CONCLUSION AND PERSPECTIVES
+    
+        6.1  Project Summary
+        6.2  Acquired Skills
+        6.3  Future Improvements
+        6.4  General Conclusion
+
+
+================================================================================
+================================================================================
+                    PART I - CONTEXT AND PROBLEM STATEMENT
+================================================================================
+================================================================================
+
+
+--------------------------------------------------------------------------------
+                        1.1 GENERAL INTRODUCTION
+--------------------------------------------------------------------------------
+
+In today's cybersecurity landscape, understanding and managing an organization's
+attack surface is a major challenge. The attack surface represents all potential
+entry points that an attacker could exploit to compromise an information system.
+
+This Final Year Project (PFE) is part of a "Mini Red Team Project" aimed at
+developing a comprehensive external reconnaissance and attack surface mapping
+tool. The developed tool, named RedSurface, automates the initial phases of a
+Red Team operation by discovering, analyzing, and visualizing an organization's
+exposed assets.
+
+RedSurface distinguishes itself through its modular approach, its ability to
+aggregate multiple data sources, and its production of interactive visualizations
+in the form of attack graphs. This report details the entire design, development,
+and validation process of this tool.
+
+
+--------------------------------------------------------------------------------
+                        1.2 PROJECT CONTEXT
+--------------------------------------------------------------------------------
+
+ACADEMIC CONTEXT
+----------------
+
+This project is part of a final year internship in cybersecurity. The educational
+objective is twofold:
+
+    1. Acquiring practical skills in developing offensive security tools
+    
+    2. In-depth understanding of reconnaissance methodologies used by
+       professional Red Team operators
+
+TECHNICAL CONTEXT
+-----------------
+
+Modern organizations have an increasingly extensive digital footprint:
+
+    - Multiplication of subdomains and web services
+    - Massive adoption of cloud (AWS, Azure, GCP)
+    - Diversification of technologies used
+    - Growing exposure of data on the Internet
+
+This complexity makes manual management of the attack surface practically
+impossible. Security teams need automated tools to:
+
+    - Discover all exposed assets
+    - Identify technologies in place
+    - Map potential vulnerabilities
+    - Visualize relationships between different elements
+
+OPERATIONAL CONTEXT
+-------------------
+
+In a typical Red Team operation, the reconnaissance phase represents
+approximately 60% of the total engagement time. This phase includes:
+
+    Phase 1: Passive Reconnaissance
+        → Gathering information without direct interaction with the target
+        → Sources: Certificate Transparency, public DNS, OSINT
+    
+    Phase 2: Active Reconnaissance
+        → Direct interaction with target systems
+        → Directory enumeration, port scanning, fingerprinting
+    
+    Phase 3: Analysis and Correlation
+        → Aggregating collected data
+        → Identifying potential attack vectors
+
+RedSurface automates these three phases and produces a unified visualization
+of the results.
+
+
+--------------------------------------------------------------------------------
+                        1.3 PROBLEM STATEMENT
+--------------------------------------------------------------------------------
+
+IDENTIFIED PROBLEMS
+-------------------
+
+Analysis of the external reconnaissance process reveals several difficulties:
+
+    PROBLEM 1: Tool Fragmentation
+    
+        Security professionals typically use a multitude of separate tools
+        for each task:
+        
+            - Subfinder, Amass for subdomain enumeration
+            - Nmap for port scanning
+            - WhatWeb, Wappalyzer for fingerprinting
+            - theHarvester for OSINT
+            - Gophish for phishing
+        
+        This fragmentation leads to:
+            → Time lost configuring each tool
+            → Difficulty correlating results
+            → Steep learning curve
+    
+    PROBLEM 2: Lack of Unified Visualization
+    
+        Existing tools typically produce text outputs or JSON/CSV files
+        that are difficult to interpret. A visual representation showing
+        relationships between elements is missing:
+        
+            - Domains and subdomains
+            - IP addresses and technologies
+            - Technologies and vulnerabilities
+            - Emails and identified personnel
+    
+    PROBLEM 3: Correlation Complexity
+    
+        Manual correlation of data from different sources is time-consuming
+        and error-prone. For example:
+        
+            → A technology detected on a subdomain may have known CVEs
+              in the NVD database
+            → A discovered email address may appear in data breaches
+        
+        These correlations are essential but rarely automated.
+    
+    PROBLEM 4: Lack of Flexibility
+    
+        Existing tools are often monolithic, not allowing selection of
+        only the necessary modules based on the engagement context
+        (passive vs active scan, with or without phishing, etc.)
+
+RESEARCH QUESTION
+-----------------
+
+How to design and develop a modular reconnaissance tool capable of
+automatically aggregating data from multiple sources, correlating this
+information, and producing an interactive visualization in the form of
+an attack graph?
+
+
+--------------------------------------------------------------------------------
+                        1.4 PROJECT OBJECTIVES
+--------------------------------------------------------------------------------
+
+MAIN OBJECTIVE
+--------------
+
+Develop a comprehensive Python external reconnaissance tool that automates
+the discovery, analysis, and visualization of a target organization's
+attack surface.
+
+SPECIFIC OBJECTIVES
+-------------------
+
+    SO1: Infrastructure Discovery
+    
+        Implement a module capable of:
+        - Enumerating subdomains via Certificate Transparency
+        - Resolving DNS records (A, AAAA, CNAME, MX, TXT)
+        - Detecting cloud providers (AWS, Azure, GCP, Cloudflare)
+        - Analyzing SSL/TLS certificates
+    
+    SO2: Technology Fingerprinting
+    
+        Develop a technology detection system:
+        - HTTP header analysis (Server, X-Powered-By, etc.)
+        - Patterns in HTML content (Wappalyzer style)
+        - WAF (Web Application Firewall) detection
+        - Version extraction for CVE correlation
+    
+    SO3: Vulnerability Mapping
+    
+        Integrate the NVD database to:
+        - Search CVEs by technology and version
+        - Extract CVSS scores and severity levels
+        - Automatic technology → vulnerability correlation
+    
+    SO4: OSINT Collection
+    
+        Implement open source information gathering:
+        - Email address discovery (PGP, GitHub, Hunter.io)
+        - Personnel identification
+        - Verification in breach databases (HIBP)
+    
+    SO5: Active Reconnaissance (Optional)
+    
+        Provide active reconnaissance capabilities:
+        - Directory and file enumeration
+        - DNS zone transfer attempts (AXFR)
+    
+    SO6: Phishing Simulation (Optional)
+    
+        Integrate a phishing simulation module:
+        - Predefined email templates
+        - Customizable landing pages
+        - Click tracking and credential capture
+    
+    SO7: Interactive Visualization
+    
+        Produce an interactive attack graph:
+        - Nodes representing different asset types
+        - Edges representing relationships
+        - Standalone HTML export (vis.js)
+    
+    SO8: Intuitive User Interface
+    
+        Develop an accessible interface:
+        - Complete command line interface (CLI)
+        - Guided interactive mode (wizard)
+        - Professional HTML reports
+
+
+--------------------------------------------------------------------------------
+                       1.5 SCOPE AND LIMITATIONS
+--------------------------------------------------------------------------------
+
+PROJECT SCOPE
+-------------
+
+The RedSurface project covers:
+
+    ✓ External reconnaissance (Internet-exposed assets)
+    ✓ Public sources and authorized APIs
+    ✓ Report and visualization generation
+    ✓ CLI and interactive interface
+    ✓ Modular and extensible architecture
+
+OUT OF SCOPE
+------------
+
+The following elements are explicitly excluded:
+
+    ✗ Vulnerability exploitation
+    ✗ Internal reconnaissance (post-exploitation)
+    ✗ Active vulnerability scanning (Nessus/OpenVAS style)
+    ✗ Denial of service attacks
+    ✗ Any illegal or unauthorized activity
+
+TECHNICAL LIMITATIONS
+---------------------
+
+    1. Dependency on External Services
+       
+       The tool depends on third-party services (crt.sh, NVD, Shodan) that may:
+       - Be temporarily unavailable
+       - Impose request limits (rate limiting)
+       - Modify their APIs without notice
+    
+    2. Limits of Passive Detection
+       
+       Some technologies can only be detected through active analysis
+       of application behavior.
+    
+    3. False Positives/Negatives
+       
+       Pattern-based detection can generate:
+       - False positives (misidentified technology)
+       - False negatives (undetected technology)
+
+ETHICAL AND LEGAL CONSIDERATIONS
+--------------------------------
+
+    ⚠️  IMPORTANT WARNING
+    
+    RedSurface is designed exclusively for authorized security testing.
+    Using this tool without prior written authorization may constitute
+    a criminal offense under applicable laws:
+    
+        - USA: Computer Fraud and Abuse Act (CFAA)
+        - UK: Computer Misuse Act 1990
+        - EU: Directive 2013/40/EU
+        - Various national cybercrime laws
+    
+    The user is solely responsible for their use of this tool.
+
+
+================================================================================
+================================================================================
+                        PART II - STATE OF THE ART
+================================================================================
+================================================================================
+
+
+--------------------------------------------------------------------------------
+                  2.1 RECONNAISSANCE IN CYBERSECURITY
+--------------------------------------------------------------------------------
+
+DEFINITION
+----------
+
+Reconnaissance (or "recon") is the first phase of any penetration test or
+Red Team operation. It consists of collecting as much information as possible
+about a target before planning and executing attacks.
+
+TYPES OF RECONNAISSANCE
+-----------------------
+
+    PASSIVE RECONNAISSANCE
+    
+        Characteristics:
+        - No direct interaction with target systems
+        - Use of public sources only
+        - Undetectable by the target
+        
+        Typical sources:
+        - Certificate Transparency (crt.sh, CertSpotter)
+        - Search engines (Google Dorks, Shodan, Censys)
+        - Social networks and OSINT
+        - Web archives (Wayback Machine)
+        - Breach databases (HIBP, DeHashed)
+    
+    ACTIVE RECONNAISSANCE
+    
+        Characteristics:
+        - Direct interaction with target systems
+        - Potentially detectable (logs, IDS/IPS)
+        - More information but more risks
+        
+        Typical techniques:
+        - Port scanning (Nmap, Masscan)
+        - Directory enumeration (Gobuster, Dirbuster)
+        - Service fingerprinting
+        - DNS zone transfer attempts
+
+IMPORTANCE OF RECONNAISSANCE
+----------------------------
+
+"Give me six hours to chop down a tree and I will spend the first four
+ sharpening the axe." - Abraham Lincoln
+
+This quote perfectly illustrates the importance of the reconnaissance phase.
+In a Red Team engagement:
+
+    - 60% of time is dedicated to reconnaissance
+    - 20% to attack planning
+    - 15% to execution
+    - 5% to reporting
+
+Thorough reconnaissance allows:
+
+    1. Identifying all potential attack vectors
+    2. Prioritizing targets by criticality
+    3. Avoiding detection by understanding the environment
+    4. Maximizing efficiency of subsequent phases
+
+
+--------------------------------------------------------------------------------
+                      2.2 RED TEAM METHODOLOGIES
+--------------------------------------------------------------------------------
+
+RED TEAM DEFINITION
+-------------------
+
+A Red Team simulates realistic attackers to test an organization's defenses.
+Unlike traditional penetration testing, Red Team:
+
+    - Operates over a longer period (weeks/months)
+    - Uses realistic tactics, techniques, and procedures (TTPs)
+    - Aims to achieve specific "flags"
+    - Also tests detection capabilities (Blue Team)
+
+REFERENCE FRAMEWORKS
+--------------------
+
+    MITRE ATT&CK
+    
+        The ATT&CK (Adversarial Tactics, Techniques, and Common Knowledge)
+        framework classifies attack techniques into 14 tactics:
+        
+        1.  Reconnaissance
+        2.  Resource Development
+        3.  Initial Access
+        4.  Execution
+        5.  Persistence
+        6.  Privilege Escalation
+        7.  Defense Evasion
+        8.  Credential Access
+        9.  Discovery
+        10. Lateral Movement
+        11. Collection
+        12. Command and Control
+        13. Exfiltration
+        14. Impact
+        
+        RedSurface primarily covers the "Reconnaissance" tactic
+        with techniques:
+        
+        - T1595: Active Scanning
+        - T1592: Gather Victim Host Information
+        - T1589: Gather Victim Identity Information
+        - T1590: Gather Victim Network Information
+        - T1591: Gather Victim Organization Information
+    
+    PTES (Penetration Testing Execution Standard)
+    
+        PTES defines 7 phases for a penetration test:
+        
+        1. Pre-engagement Interactions
+        2. Intelligence Gathering        ← RedSurface
+        3. Threat Modeling
+        4. Vulnerability Analysis        ← RedSurface (partial)
+        5. Exploitation
+        6. Post Exploitation
+        7. Reporting                     ← RedSurface
+    
+    OWASP Testing Guide
+    
+        For web applications, OWASP defines test categories:
+        
+        - Information Gathering          ← RedSurface
+        - Configuration Management Testing
+        - Identity Management Testing
+        - Authentication Testing
+        - Authorization Testing
+        - Session Management Testing
+        - Input Validation Testing
+        - Error Handling Testing
+        - Cryptography Testing
+        - Business Logic Testing
+        - Client-side Testing
+
+
+--------------------------------------------------------------------------------
+                        2.3 EXISTING TOOLS
+--------------------------------------------------------------------------------
+
+SUBDOMAIN ENUMERATION TOOLS
+---------------------------
+
+    Subfinder (ProjectDiscovery)
+    
+        + Strengths:
+          - Fast and efficient
+          - Support for many sources
+          - Structured JSON output
+        
+        - Limitations:
+          - Only subdomain enumeration
+          - No correlation with other data
+    
+    Amass (OWASP)
+    
+        + Strengths:
+          - Very comprehensive (70+ sources)
+          - Basic relationship graph
+          - Active and passive reconnaissance
+        
+        - Limitations:
+          - Complex to configure
+          - High memory consumption
+          - No technology fingerprinting
+
+FINGERPRINTING TOOLS
+--------------------
+
+    Wappalyzer
+    
+        + Strengths:
+          - Accurate web technology detection
+          - Actively maintained database
+          - Browser extensions
+        
+        - Limitations:
+          - No native CLI integration
+          - No automatic CVE correlation
+    
+    WhatWeb
+    
+        + Strengths:
+          - Complete CLI
+          - Many plugins
+          - Configurable aggressiveness
+        
+        - Limitations:
+          - No visualization
+          - No integrated OSINT
+
+OSINT TOOLS
+-----------
+
+    theHarvester
+    
+        + Strengths:
+          - Collects emails, subdomains, IPs
+          - Multiple sources (Google, Bing, LinkedIn)
+        
+        - Limitations:
+          - No graphical visualization
+          - No vulnerability correlation
+    
+    SpiderFoot
+    
+        + Strengths:
+          - Very comprehensive (200+ modules)
+          - Web interface
+          - Automatic correlations
+        
+        - Limitations:
+          - Heavy and complex
+          - Requires server installation
+
+PHISHING TOOLS
+--------------
+
+    Gophish
+    
+        + Strengths:
+          - Complete web interface
+          - Detailed statistics
+          - Customizable templates
+        
+        - Limitations:
+          - Separate tool (not integrated with recon)
+          - Requires server installation
+
+
+--------------------------------------------------------------------------------
+                    2.4 REDSURFACE POSITIONING
+--------------------------------------------------------------------------------
+
+COMPARATIVE ANALYSIS
+--------------------
+
+┌─────────────────────┬───────────┬───────────┬─────────────┬─────────────────┐
+│ Feature             │ Subfinder │ Amass     │ SpiderFoot  │ RedSurface      │
+├─────────────────────┼───────────┼───────────┼─────────────┼─────────────────┤
+│ Subdomains          │    ✓✓✓    │   ✓✓✓     │     ✓✓      │      ✓✓         │
+│ DNS Resolution      │     ✗     │    ✓✓     │     ✓       │      ✓✓         │
+│ Fingerprinting      │     ✗     │     ✗     │     ✓       │      ✓✓         │
+│ CVE Mapping         │     ✗     │     ✗     │     ✓       │      ✓✓         │
+│ OSINT (emails)      │     ✗     │     ✓     │    ✓✓✓      │      ✓✓         │
+│ Phishing            │     ✗     │     ✗     │     ✗       │      ✓✓         │
+│ Interactive Graph   │     ✗     │     ✓     │     ✓       │     ✓✓✓         │
+│ HTML Report         │     ✗     │     ✗     │     ✓       │      ✓✓         │
+│ Simple Installation │    ✓✓     │     ✓     │     ✗       │     ✓✓✓         │
+│ Modular             │     ✗     │     ✓     │     ✓       │     ✓✓✓         │
+└─────────────────────┴───────────┴───────────┴─────────────┴─────────────────┘
+
+REDSURFACE VALUE PROPOSITION
+----------------------------
+
+RedSurface positions itself as a modular "all-in-one" tool offering:
+
+    1. VERTICAL INTEGRATION
+       
+       Rather than using 5-6 separate tools, RedSurface integrates the
+       entire reconnaissance chain into a single coherent tool.
+    
+    2. AUTOMATIC CORRELATION
+       
+       Collected data is automatically correlated:
+       - Subdomain → IP → Cloud Provider
+       - Technology → Version → CVE
+       - Email → Breach Database
+    
+    3. NATIVE VISUALIZATION
+       
+       The interactive attack graph is automatically generated, showing
+       relationships between all discovered elements.
+    
+    4. FLEXIBILITY
+       
+       4 scan modes (Passive, Active, Phishing, Custom) allow adapting
+       the tool to the engagement context.
+    
+    5. ACCESSIBILITY
+       
+       - Simple installation (pip install)
+       - Wizard mode for beginners
+       - Complete CLI for experts
+
+
+================================================================================
+================================================================================
+                 PART III - DESIGN AND ARCHITECTURE
+================================================================================
+================================================================================
+
+
+--------------------------------------------------------------------------------
+                      3.1 GLOBAL ARCHITECTURE
+--------------------------------------------------------------------------------
+
+ARCHITECTURE DIAGRAM
+--------------------
+
+    ┌─────────────────────────────────────────────────────────────────────────┐
+    │                           USER INTERFACE                                │
+    │  ┌─────────────────────────────┐  ┌─────────────────────────────────┐  │
+    │  │         CLI (argparse)      │  │      Wizard (questionary)       │  │
+    │  │  python main.py --target    │  │  python main.py --interactive   │  │
+    │  └─────────────────────────────┘  └─────────────────────────────────┘  │
+    └────────────────────────────────────┬────────────────────────────────────┘
+                                         │
+                                         ▼
+    ┌─────────────────────────────────────────────────────────────────────────┐
+    │                          ORCHESTRATION LAYER                            │
+    │  ┌─────────────────────────────────────────────────────────────────┐   │
+    │  │                         main.py                                  │   │
+    │  │  - Argument parsing                                             │   │
+    │  │  - Module initialization                                        │   │
+    │  │  - Pipeline execution                                           │   │
+    │  │  - Error handling                                               │   │
+    │  └─────────────────────────────────────────────────────────────────┘   │
+    └────────────────────────────────────┬────────────────────────────────────┘
+                                         │
+                    ┌────────────────────┼────────────────────┐
+                    │                    │                    │
+                    ▼                    ▼                    ▼
+    ┌───────────────────────┐ ┌─────────────────┐ ┌───────────────────────┐
+    │      core/config      │ │   core/target   │ │     core/wizard       │
+    │  - ScanConfig         │ │  - Target state │ │  - Interactive prompts│
+    │  - ScanMode enum      │ │  - Results      │ │  - Configuration      │
+    │  - Validation         │ │  - Metadata     │ │  - Validation         │
+    └───────────────────────┘ └─────────────────┘ └───────────────────────┘
+                                         │
+                                         ▼
+    ┌─────────────────────────────────────────────────────────────────────────┐
+    │                         MODULE LAYER (ASYNC)                            │
+    │                                                                         │
+    │  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐       │
+    │  │  discovery  │ │ fingerprint │ │    osint    │ │active_recon │       │
+    │  │  - crt.sh   │ │  - Headers  │ │  - Emails   │ │  - DirEnum  │       │
+    │  │  - DNS      │ │  - HTML     │ │  - People   │ │  - AXFR     │       │
+    │  │  - SSL      │ │  - WAF      │ │  - Breaches │ │             │       │
+    │  │  - Cloud    │ │  - CVE/NVD  │ │             │ │             │       │
+    │  └─────────────┘ └─────────────┘ └─────────────┘ └─────────────┘       │
+    │                                                                         │
+    │  ┌─────────────┐ ┌─────────────┐                                       │
+    │  │ port_intel  │ │  phishing   │                                       │
+    │  │  - Shodan   │ │  - Emails   │                                       │
+    │  │  - Ports    │ │  - Landing  │                                       │
+    │  │  - Services │ │  - Tracking │                                       │
+    │  └─────────────┘ └─────────────┘                                       │
+    └────────────────────────────────────┬────────────────────────────────────┘
+                                         │
+                                         ▼
+    ┌─────────────────────────────────────────────────────────────────────────┐
+    │                       GRAPH & EXPORT LAYER                              │
+    │  ┌─────────────────────────────────────────────────────────────────┐   │
+    │  │                      core/graph_engine                           │   │
+    │  │  - Graph construction (NetworkX)                                │   │
+    │  │  - Node and edge creation                                       │   │
+    │  │  - PyVis export (interactive HTML)                              │   │
+    │  │  - JSON export                                                   │   │
+    │  └─────────────────────────────────────────────────────────────────┘   │
+    │                                                                         │
+    │  ┌─────────────────────────────────────────────────────────────────┐   │
+    │  │                   utils/report_generator                         │   │
+    │  │  - Jinja2 template                                               │   │
+    │  │  - Statistics and metrics                                       │   │
+    │  │  - HTML export                                                   │   │
+    │  └─────────────────────────────────────────────────────────────────┘   │
+    └────────────────────────────────────┬────────────────────────────────────┘
+                                         │
+                                         ▼
+    ┌─────────────────────────────────────────────────────────────────────────┐
+    │                            OUTPUT FILES                                 │
+    │  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐       │
+    │  │   .json     │ │   .html     │ │   .html     │ │    .log     │       │
+    │  │  (Results)  │ │  (Graph)    │ │  (Report)   │ │  (Logs)     │       │
+    │  └─────────────┘ └─────────────┘ └─────────────┘ └─────────────┘       │
+    └─────────────────────────────────────────────────────────────────────────┘
+
+ARCHITECTURAL PRINCIPLES
+------------------------
+
+    1. SEPARATION OF CONCERNS
+       
+       Each module has a unique and well-defined responsibility.
+       For example, the `discovery` module only handles infrastructure
+       discovery, not fingerprinting.
+    
+    2. ASYNCHRONISM (Async/Await)
+       
+       All I/O operations (DNS, HTTP, API) are asynchronous to maximize
+       performance without blocking execution.
+    
+    3. MODULARITY
+       
+       Modules are independent and can be enabled/disabled as needed.
+       Each module can be tested in isolation.
+    
+    4. EXTENSIBILITY
+       
+       The architecture allows easy addition of new modules or data
+       sources without modifying existing code.
+    
+    5. FAIL-SAFE
+       
+       Errors in one module don't interrupt global execution.
+       The system continues with available data.
+
+
+--------------------------------------------------------------------------------
+                      3.2 TECHNOLOGY CHOICES
+--------------------------------------------------------------------------------
+
+LANGUAGE: PYTHON 3.9+
+---------------------
+
+Justification:
+
+    + Rich ecosystem of security libraries
+    + Native asynchronism support (asyncio)
+    + Clear and maintainable syntax
+    + Large community and documentation
+    + Portability (Windows, Linux, macOS)
+
+MAIN LIBRARIES
+--------------
+
+    httpx (HTTP Async Client)
+    
+        Role    : Asynchronous HTTP requests
+        Version : 0.24+
+        
+        Advantages over requests:
+        - Native async/await support
+        - HTTP/2 support
+        - Automatic connection pooling
+        - Configurable timeouts
+    
+    dnspython (DNS Library)
+    
+        Role    : Asynchronous DNS resolution
+        Version : 2.3+
+        
+        Features used:
+        - A, AAAA, CNAME, MX, TXT, NS queries
+        - Async resolver
+        - Zone transfer (AXFR)
+        - Timeout/lifetime configuration
+    
+    NetworkX (Graph Library)
+    
+        Role    : Graph data structure
+        Version : 3.0+
+        
+        Usage:
+        - Creating directed graphs
+        - Traversal algorithms
+        - Export to different formats
+    
+    PyVis (Graph Visualization)
+    
+        Role    : Interactive HTML graph generation
+        Version : 0.3+
+        
+        Features:
+        - vis.js visualization
+        - Node and edge customization
+        - Standalone HTML export
+    
+    questionary (Interactive CLI)
+    
+        Role    : Interactive interface
+        Version : 2.0+
+        
+        Prompt types used:
+        - select (single choice)
+        - checkbox (multiple choice)
+        - text (free input)
+        - confirm (yes/no)
+    
+    Flask (Web Framework)
+    
+        Role    : Phishing server
+        Version : 2.0+
+        
+        Usage:
+        - HTTP server for landing pages
+        - Click tracking
+        - Credential capture
+
+COMPLETE DEPENDENCIES (requirements.txt)
+----------------------------------------
+
+    httpx>=0.24.0
+    dnspython>=2.3.0
+    networkx>=3.0
+    pyvis>=0.3.0
+    questionary>=2.0.0
+    flask>=2.0.0
+    jinja2>=3.0.0
+    rich>=13.0.0        # Console formatting
+    python-dateutil     # Date parsing
+
+
+--------------------------------------------------------------------------------
+                      3.3 MODULAR DESIGN
+--------------------------------------------------------------------------------
+
+MODULE STRUCTURE
+----------------
+
+Each module follows a standardized structure:
+
+    module_name/
+    └── module.py
+        ├── Imports
+        ├── Constants (signatures, patterns)
+        ├── Dataclasses (structured results)
+        ├── Main Class
+        │   ├── __init__() : Configuration
+        │   ├── async methods : I/O operations
+        │   └── run() : Main entry point
+        └── Helper functions
+
+COMMON INTERFACE
+----------------
+
+All modules expose a similar interface:
+
+    class ModuleName:
+        def __init__(self, config: dict):
+            """Initialization with configuration."""
+            pass
+        
+        async def run(self, target: str) -> ModuleResults:
+            """Main execution, returns structured results."""
+            pass
+
+DATACLASSES FOR RESULTS
+-----------------------
+
+Each module defines its data structures:
+
+    @dataclass
+    class DiscoveredAsset:
+        hostname: str
+        ips: List[str]
+        cnames: List[str]
+        cloud_providers: List[str]
+        ssl_info: Optional[Dict]
+        is_alive: bool
+        error: Optional[str]
+    
+    @dataclass
+    class TechFingerprint:
+        name: str
+        version: Optional[str]
+        source: str
+        confidence: str
+        cves: List[Dict]
+    
+    @dataclass
+    class OSINTResults:
+        emails: List[str]
+        people: List[Dict]
+        breach_data: Dict[str, List]
+
+INTER-MODULE COMMUNICATION
+--------------------------
+
+Modules communicate through the orchestrator (main.py):
+
+    1. Discovery produces a list of assets
+    2. These assets are passed to Fingerprint
+    3. Found technologies are passed to CVE lookup
+    4. Emails found by OSINT can be used by Phishing
+    
+    No module directly calls another module.
+
+
+--------------------------------------------------------------------------------
+                        3.4 DATA FLOW
+--------------------------------------------------------------------------------
+
+DETAILED EXECUTION PIPELINE
+---------------------------
+
+    ════════════════════════════════════════════════════════════════════════
+    PHASE 1: INITIALIZATION
+    ════════════════════════════════════════════════════════════════════════
+    
+    Input  : CLI arguments or wizard responses
+    Output : Validated ScanConfig
+    
+    Operations:
+        1.1  Parse arguments (argparse)
+        1.2  If --interactive: launch wizard
+        1.3  Validate configuration
+        1.4  Create output directory
+        1.5  Initialize logger
+        1.6  Display banner
+    
+    ════════════════════════════════════════════════════════════════════════
+    PHASE 2: INFRASTRUCTURE DISCOVERY
+    ════════════════════════════════════════════════════════════════════════
+    
+    Input  : Target domain
+    Output : List[DiscoveredAsset]
+    
+    Operations:
+        2.1  Query crt.sh (Certificate Transparency)
+             → Automatic retry if 503
+             → Fallback to CertSpotter/HackerTarget
+        
+        2.2  Add subdomains from wordlist
+        
+        2.3  Async DNS resolution for each subdomain
+             → Semaphore to limit concurrency (30)
+             → Retry with backoff on timeout
+        
+        2.4  For each resolved asset:
+             → Detect cloud provider (CNAME patterns)
+             → Analyze SSL certificate (if port 443)
+        
+        2.5  Filter "alive" assets (with IPs)
+    
+    Typical duration: 30-120 seconds depending on domain size
+    
+    ════════════════════════════════════════════════════════════════════════
+    PHASE 3: TECHNOLOGY FINGERPRINTING
+    ════════════════════════════════════════════════════════════════════════
+    
+    Input  : List[DiscoveredAsset]
+    Output : Dict[hostname, List[TechFingerprint]]
+    
+    Operations:
+        3.1  For each alive asset (async):
+             
+             3.1.1  HTTP/HTTPS request
+                    → Headers: Server, X-Powered-By, etc.
+                    → Cookies: Session identifiers
+             
+             3.1.2  HTML content analysis
+                    → Regex patterns (meta tags, scripts, etc.)
+                    → CMS, framework, library detection
+             
+             3.1.3  WAF detection
+                    → Specific headers
+                    → Error response patterns
+        
+        3.2  For each detected technology:
+             → Extract version if available
+    
+    Typical duration: 20-60 seconds
+    
+    ════════════════════════════════════════════════════════════════════════
+    PHASE 4: VULNERABILITY MAPPING
+    ════════════════════════════════════════════════════════════════════════
+    
+    Input  : Dict[hostname, List[TechFingerprint]]
+    Output : TechFingerprint.cves populated
+    
+    Operations:
+        4.1  For each unique technology:
+             
+             4.1.1  Check cache (avoid duplicate requests)
+             
+             4.1.2  NVD API request
+                    URL: https://services.nvd.nist.gov/rest/json/cves/2.0
+                    Params: keywordSearch={tech} {version}
+             
+             4.1.3  Parse response
+                    → CVE ID
+                    → CVSS Score (v3.1 > v3.0 > v2.0)
+                    → Severity (CRITICAL, HIGH, MEDIUM, LOW)
+                    → Description
+             
+             4.1.4  Rate limiting
+                    → Without API key: 5 req/30s
+                    → With API key: 50 req/30s
+                    → Fallback to mock database if limit hit
+    
+    Typical duration: 10-30 seconds (depends on rate limiting)
+    
+    ════════════════════════════════════════════════════════════════════════
+    PHASE 5: OSINT COLLECTION
+    ════════════════════════════════════════════════════════════════════════
+    
+    Input  : Target domain
+    Output : OSINTResults
+    
+    Operations:
+        5.1  Email search (parallel async)
+             
+             5.1.1  PGP Keyservers
+                    - keyserver.ubuntu.com
+                    - pgp.mit.edu
+                    - keys.openpgp.org
+             
+             5.1.2  crt.sh (emails in certificates)
+             
+             5.1.3  GitHub (public commits)
+                    - Requires token to avoid rate limit
+             
+             5.1.4  Hunter.io (if API key provided)
+             
+             5.1.5  DNS hints
+                    - Emails in MX records
+                    - SPF includes
+                    - DMARC reports
+        
+        5.2  Email deduplication
+        
+        5.3  Optional verification (SMTP check)
+        
+        5.4  Breach search (HIBP if API key)
+    
+    Typical duration: 15-45 seconds
+    
+    ════════════════════════════════════════════════════════════════════════
+    PHASE 6: ACTIVE RECONNAISSANCE (IF ENABLED)
+    ════════════════════════════════════════════════════════════════════════
+    
+    Input  : List[DiscoveredAsset], ScanConfig
+    Output : ActiveReconResults
+    
+    Operations:
+        6.1  DNS zone transfer attempt
+             → Get NS servers for domain
+             → Try AXFR on each NS
+             → Parse records if successful (rare)
+        
+        6.2  Directory enumeration
+             → Default or custom wordlist
+             → Async requests with semaphore
+             → Collect codes 200, 301, 302, 403
+    
+    Typical duration: 60-300 seconds depending on size
+    
+    ════════════════════════════════════════════════════════════════════════
+    PHASE 7: PORT INTELLIGENCE (IF SHODAN KEY)
+    ════════════════════════════════════════════════════════════════════════
+    
+    Input  : List[IP addresses]
+    Output : PortIntelResults
+    
+    Operations:
+        7.1  For each unique IP:
+             → Shodan API request (/shodan/host/{ip})
+             → Extract open ports
+             → Extract service banners
+             → Extract Shodan vulnerabilities
+    
+    Typical duration: 5-15 seconds
+    
+    ════════════════════════════════════════════════════════════════════════
+    PHASE 8: PHISHING SIMULATION (IF ENABLED)
+    ════════════════════════════════════════════════════════════════════════
+    
+    Input  : OSINTResults.emails, PhishingConfig
+    Output : PhishingCampaignResults
+    
+    Operations:
+        8.1  Start Flask server (tracking)
+             → Route /track/<encoded_email>
+             → Route /login (landing page)
+             → Route /status (statistics)
+        
+        8.2  Generate phishing emails
+             → Selected template
+             → Personalization (name, company)
+             → Unique tracking URL
+        
+        8.3  Send emails (SMTP)
+             → Rate limiting to avoid blacklist
+             → Error handling per email
+        
+        8.4  Log interactions
+             → Clicks
+             → Submitted credentials
+    
+    Typical duration: Variable (ongoing campaign)
+    
+    ════════════════════════════════════════════════════════════════════════
+    PHASE 9: GRAPH CONSTRUCTION
+    ════════════════════════════════════════════════════════════════════════
+    
+    Input  : All collected data
+    Output : NetworkX Graph
+    
+    Operations:
+        9.1  Create root node (domain)
+        
+        9.2  Add nodes by type:
+             → Subdomains (dot, purple)
+             → IPs (dot, green/orange)
+             → Technologies (box, blue)
+             → CVEs (triangle, red)
+             → Emails (box, gold)
+             → People (ellipse, pink)
+             → Ports (dot, cyan)
+             → Directories (box, teal)
+        
+        9.3  Create edges (relationships):
+             → domain --has_subdomain--> subdomain
+             → subdomain --resolves_to--> ip
+             → subdomain --runs--> technology
+             → technology --has_cve--> cve
+             → domain --associated_email--> email
+             → email --belongs_to--> person
+             → ip --has_port--> port
+        
+        9.4  Calculate layouts (positions)
+    
+    Typical duration: 1-5 seconds
+    
+    ════════════════════════════════════════════════════════════════════════
+    PHASE 10: EXPORT AND REPORT GENERATION
+    ════════════════════════════════════════════════════════════════════════
+    
+    Input  : NetworkX Graph, All Results
+    Output : Files in output/
+    
+    Operations:
+        10.1 JSON export (raw results)
+             → domain_results.json
+        
+        10.2 Graph JSON export
+             → domain_graph.json
+        
+        10.3 HTML graph generation (PyVis)
+             → domain_graph.html
+             → Standalone (no external dependencies)
+        
+        10.4 HTML report generation (Jinja2)
+             → domain_report.html
+             → Statistics, tables, recommendations
+    
+    Typical duration: 2-5 seconds
+
+
+--------------------------------------------------------------------------------
+                        3.5 DATA MODEL
+--------------------------------------------------------------------------------
+
+MAIN ENTITY SCHEMA
+------------------
+
+    ┌─────────────────────────────────────────────────────────────────────┐
+    │                           Target                                    │
+    ├─────────────────────────────────────────────────────────────────────┤
+    │  - domain: str                                                      │
+    │  - scan_config: ScanConfig                                          │
+    │  - discovered_assets: List[DiscoveredAsset]                         │
+    │  - technologies: Dict[str, List[TechFingerprint]]                   │
+    │  - osint_results: OSINTResults                                      │
+    │  - active_recon_results: ActiveReconResults                         │
+    │  - port_intel_results: PortIntelResults                             │
+    │  - phishing_results: PhishingResults                                │
+    └─────────────────────────────────────────────────────────────────────┘
+                                    │
+                    ┌───────────────┼───────────────┐
+                    │               │               │
+                    ▼               ▼               ▼
+    ┌─────────────────────┐ ┌─────────────────┐ ┌─────────────────────────┐
+    │   DiscoveredAsset   │ │ TechFingerprint │ │     OSINTResults        │
+    ├─────────────────────┤ ├─────────────────┤ ├─────────────────────────┤
+    │ - hostname: str     │ │ - name: str     │ │ - emails: List[str]     │
+    │ - ips: List[str]    │ │ - version: str  │ │ - people: List[Dict]    │
+    │ - cnames: List[str] │ │ - source: str   │ │ - breach_data: Dict     │
+    │ - cloud_providers   │ │ - confidence    │ │                         │
+    │ - ssl_info: Dict    │ │ - cves: List    │ │                         │
+    │ - is_alive: bool    │ │                 │ │                         │
+    └─────────────────────┘ └─────────────────┘ └─────────────────────────┘
+
+GRAPH MODEL
+-----------
+
+    Nodes:
+    
+        {
+            "id": "unique_identifier",
+            "label": "Display Name",
+            "type": "domain|subdomain|ip|technology|cve|email|person|port|dir",
+            "shape": "diamond|dot|box|triangle|ellipse",
+            "color": "#hex_color",
+            "metadata": { ... }
+        }
+    
+    Edges:
+    
+        {
+            "source": "node_id_1",
+            "target": "node_id_2",
+            "relationship": "has_subdomain|resolves_to|runs|has_cve|..."
+        }
+
+
+================================================================================
+================================================================================
+                 PART IV - TECHNICAL IMPLEMENTATION
+================================================================================
+================================================================================
+
+
+--------------------------------------------------------------------------------
+              4.1 DISCOVERY MODULE (INFRASTRUCTURE DISCOVERY)
+--------------------------------------------------------------------------------
+
+FILE: modules/discovery.py
+
+OBJECTIVE
+---------
+
+Discover all subdomains associated with a target domain and resolve their
+DNS records to identify IP addresses and cloud providers.
+
+DATA SOURCES
+------------
+
+    1. Certificate Transparency (CT) Logs
+       
+       CT logs are public registries of all SSL/TLS certificates issued by
+       certificate authorities. They are a valuable source for subdomain
+       enumeration because:
+       
+       - Every issued certificate must be registered
+       - Wildcard certificates reveal patterns
+       - Historical records of old certificates
+       
+       Implemented sources:
+       
+       ┌─────────────────┬────────────────────────────────────────────────┐
+       │ Source          │ URL                                            │
+       ├─────────────────┼────────────────────────────────────────────────┤
+       │ crt.sh          │ https://crt.sh/?q=%25.{domain}&output=json    │
+       │ CertSpotter     │ https://api.certspotter.com/v1/issuances      │
+       │ HackerTarget    │ https://api.hackertarget.com/hostsearch/      │
+       └─────────────────┴────────────────────────────────────────────────┘
+    
+    2. Wordlist Bruteforce (Optional)
+       
+       A list of common subdomains is tested as a supplement:
+       
+       www, mail, ftp, admin, api, dev, staging, test, blog, shop, store,
+       app, portal, secure, vpn, remote, webmail, mx, ns1, ns2, cdn, static,
+       assets, img, images, media, video, docs, support, help, status, ...
+
+DNS RESOLUTION ALGORITHM
+------------------------
+
+    async def resolve_dns(hostname: str) -> DiscoveredAsset:
+        """
+        Resolves DNS records for a hostname.
+        
+        Sequence:
+        1. CNAME (to detect redirects and cloud)
+        2. A (IPv4)
+        3. AAAA (IPv6)
+        """
+        
+        asset = DiscoveredAsset(hostname=hostname)
+        
+        # 1. Resolve CNAME
+        try:
+            cname_records = await resolver.resolve(hostname, "CNAME")
+            for record in cname_records:
+                cname = str(record.target)
+                asset.cnames.append(cname)
+                
+                # Detect cloud provider
+                provider = detect_cloud_provider(cname)
+                if provider:
+                    asset.cloud_providers.append(provider)
+        except (NoAnswer, NXDOMAIN):
+            pass  # No CNAME, that's normal
+        except Timeout:
+            # Retry with backoff
+            await asyncio.sleep(0.5)
+            # ... retry logic
+        
+        # 2. Resolve A records
+        try:
+            a_records = await resolver.resolve(hostname, "A")
+            asset.ips.extend([str(r.address) for r in a_records])
+            asset.is_alive = True
+        except (NoAnswer, NXDOMAIN):
+            pass
+        
+        # 3. Resolve AAAA records
+        try:
+            aaaa_records = await resolver.resolve(hostname, "AAAA")
+            asset.ips.extend([str(r.address) for r in aaaa_records])
+            asset.is_alive = True
+        except (NoAnswer, NXDOMAIN):
+            pass
+        
+        return asset
+
+CLOUD PROVIDER DETECTION
+------------------------
+
+Detection is done by analyzing CNAME records:
+
+    CLOUD_SIGNATURES = {
+        # AWS
+        "amazonaws.com": "AWS",
+        "cloudfront.net": "AWS CloudFront",
+        "elb.amazonaws.com": "AWS ELB",
+        "s3.amazonaws.com": "AWS S3",
+        
+        # Azure
+        "azurewebsites.net": "Azure App Service",
+        "cloudapp.azure.com": "Azure Cloud",
+        "blob.core.windows.net": "Azure Blob",
+        
+        # Google Cloud
+        "googleapis.com": "Google Cloud",
+        "appspot.com": "Google App Engine",
+        "run.app": "Google Cloud Run",
+        
+        # CDN
+        "cloudflare.com": "Cloudflare",
+        "fastly.net": "Fastly",
+        "akamai.net": "Akamai",
+        
+        # Other
+        "herokuapp.com": "Heroku",
+        "netlify.app": "Netlify",
+        "vercel.app": "Vercel",
+        "github.io": "GitHub Pages",
+    }
+
+ERROR HANDLING AND RETRY
+------------------------
+
+    Problem: crt.sh often returns 503 (overloaded)
+    
+    Implemented solution:
+    
+        async def query_crtsh(domain: str, max_retries: int = 3) -> Set[str]:
+            for attempt in range(max_retries):
+                try:
+                    response = await client.get(url, timeout=60)
+                    
+                    if response.status_code == 200:
+                        return parse_subdomains(response.json())
+                    
+                    elif response.status_code == 503:
+                        logger.warning(f"crt.sh 503, retry {attempt+1}/{max_retries}")
+                        await asyncio.sleep(5 * (attempt + 1))  # Backoff
+                        continue
+                
+                except TimeoutException:
+                    await asyncio.sleep(5)
+            
+            # Fallback to alternative sources
+            logger.info("Trying alternative sources...")
+            return await query_certspotter(domain)
+
+
+--------------------------------------------------------------------------------
+              4.2 FINGERPRINT MODULE (TECHNOLOGY FINGERPRINTING)
+--------------------------------------------------------------------------------
+
+FILE: modules/fingerprint.py
+
+OBJECTIVE
+---------
+
+Identify technologies (web servers, CMS, frameworks, libraries) used on each
+discovered subdomain, and map these technologies to known vulnerabilities (CVE).
+
+DETECTION METHODS
+-----------------
+
+    1. HTTP HEADER ANALYSIS
+       
+       HTTP headers often reveal the technologies used:
+       
+       ┌──────────────────────┬──────────────────────────────────────────┐
+       │ Header               │ Revealed Information                     │
+       ├──────────────────────┼──────────────────────────────────────────┤
+       │ Server               │ Web server (nginx, Apache, IIS)          │
+       │ X-Powered-By         │ Language/Framework (PHP, ASP.NET, Express)│
+       │ X-AspNet-Version     │ ASP.NET version                          │
+       │ X-Generator          │ CMS (WordPress, Drupal)                  │
+       │ X-Drupal-Cache       │ Presence of Drupal                       │
+       │ X-Varnish            │ Presence of Varnish cache                │
+       │ X-Cache              │ Presence of cache (CDN)                  │
+       └──────────────────────┴──────────────────────────────────────────┘
+       
+       Detection patterns (regex):
+       
+       HEADER_SIGNATURES = {
+           "Server": [
+               (r"nginx/?(\d+\.\d+\.?\d*)?", "Nginx"),
+               (r"Apache/?(\d+\.\d+\.?\d*)?", "Apache"),
+               (r"Microsoft-IIS/?(\d+\.?\d*)?", "Microsoft IIS"),
+               (r"cloudflare", "Cloudflare"),
+               (r"gunicorn/?(\d+\.\d+\.?\d*)?", "Gunicorn"),
+           ],
+           "X-Powered-By": [
+               (r"PHP/?(\d+\.\d+\.?\d*)?", "PHP"),
+               (r"ASP\.NET", "ASP.NET"),
+               (r"Express", "Express.js"),
+               (r"Next\.js/?(\d+\.?\d*)?", "Next.js"),
+           ],
+       }
+    
+    2. HTML CONTENT ANALYSIS
+       
+       HTML content contains technology signatures:
+       
+       HTML_PATTERNS = [
+           # CMS
+           (r'<meta name="generator" content="WordPress (\d+\.?\d*)"', "WordPress", "CMS"),
+           (r'wp-content/themes/', "WordPress", "CMS"),
+           (r'/wp-includes/', "WordPress", "CMS"),
+           (r'Drupal\.settings', "Drupal", "CMS"),
+           (r'Joomla!', "Joomla", "CMS"),
+           
+           # JavaScript Frameworks
+           (r'react\.production\.min\.js', "React", "Framework"),
+           (r'__NEXT_DATA__', "Next.js", "Framework"),
+           (r'ng-version="(\d+)"', "Angular", "Framework"),
+           (r'vue\.runtime\.min\.js', "Vue.js", "Framework"),
+           
+           # Libraries
+           (r'jquery[.-](\d+\.\d+\.?\d*)\.min\.js', "jQuery", "Library"),
+           (r'bootstrap[.-](\d+\.\d+\.?\d*)', "Bootstrap", "Library"),
+           
+           # Analytics
+           (r'google-analytics\.com/analytics\.js', "Google Analytics", "Analytics"),
+           (r'googletagmanager\.com', "Google Tag Manager", "Analytics"),
+       ]
+    
+    3. COOKIE ANALYSIS
+       
+       Some cookies reveal technologies:
+       
+       COOKIE_SIGNATURES = [
+           (r'PHPSESSID', "PHP"),
+           (r'ASP\.NET_SessionId', "ASP.NET"),
+           (r'JSESSIONID', "Java"),
+           (r'connect\.sid', "Express.js"),
+           (r'laravel_session', "Laravel"),
+           (r'wp-settings', "WordPress"),
+       ]
+
+WAF DETECTION
+-------------
+
+Web Application Firewalls have identifiable signatures:
+
+    WAF_SIGNATURES = {
+        "headers": {
+            "Server": [
+                ("cloudflare", "Cloudflare WAF"),
+                ("AkamaiGHost", "Akamai WAF"),
+                ("Imperva", "Imperva WAF"),
+            ],
+            "X-Sucuri-ID": [(".*", "Sucuri WAF")],
+            "X-CDN": [("Incapsula", "Imperva/Incapsula WAF")],
+        },
+        "html": [
+            (r"Access Denied.*Cloudflare", "Cloudflare WAF"),
+            (r"Please Wait.*DDoS protection", "Cloudflare WAF"),
+            (r"The requested URL was rejected", "F5 BIG-IP WAF"),
+        ],
+    }
+
+NVD INTEGRATION (National Vulnerability Database)
+-------------------------------------------------
+
+For each detected technology, a CVE search is performed:
+
+    async def search_nvd_cves(tech_name: str, version: str = None) -> List[CVE]:
+        """
+        Search for CVEs in the NVD database.
+        
+        API Endpoint: https://services.nvd.nist.gov/rest/json/cves/2.0
+        
+        Rate Limits:
+        - Without API key: 5 requests / 30 seconds
+        - With API key: 50 requests / 30 seconds
+        """
+        
+        # Check cache
+        cache_key = f"{tech_name}_{version or 'any'}"
+        if cache_key in self._nvd_cache:
+            return self._nvd_cache[cache_key]
+        
+        # Check rate limit
+        if self._nvd_request_count >= self._nvd_rate_limit:
+            logger.warning("NVD rate limit reached, using mock database")
+            return self.get_mock_cves(tech_name, version)
+        
+        # Build request
+        keyword = f"{tech_name} {version}" if version else tech_name
+        params = {
+            "keywordSearch": keyword,
+            "resultsPerPage": 10,
+        }
+        
+        headers = {"Accept": "application/json"}
+        if self.nvd_api_key:
+            headers["apiKey"] = self.nvd_api_key
+        
+        # Execute request
+        response = await client.get(NVD_API_URL, params=params, headers=headers)
+        
+        if response.status_code == 200:
+            return self.parse_nvd_response(response.json())
+        elif response.status_code == 403:
+            self._nvd_rate_limit_hit = True
+            return self.get_mock_cves(tech_name, version)
+        
+        return []
+    
+    def parse_nvd_response(self, data: dict) -> List[CVE]:
+        """Parse NVD response and extract relevant information."""
+        
+        cves = []
+        for vuln in data.get("vulnerabilities", []):
+            cve_data = vuln.get("cve", {})
+            
+            # Extract CVSS (prefer v3.1 > v3.0 > v2.0)
+            metrics = cve_data.get("metrics", {})
+            cvss_score = None
+            severity = "Unknown"
+            
+            for version in ["cvssMetricV31", "cvssMetricV30", "cvssMetricV2"]:
+                if version in metrics and metrics[version]:
+                    cvss = metrics[version][0].get("cvssData", {})
+                    cvss_score = cvss.get("baseScore")
+                    severity = cvss.get("baseSeverity", "Unknown")
+                    break
+            
+            cves.append({
+                "cve_id": cve_data.get("id"),
+                "severity": severity,
+                "cvss_score": cvss_score,
+                "description": cve_data.get("descriptions", [{}])[0].get("value", ""),
+                "source": "NVD",
+            })
+        
+        return cves
+
+
+--------------------------------------------------------------------------------
+                4.3 OSINT MODULE (OPEN SOURCE INTELLIGENCE)
+--------------------------------------------------------------------------------
+
+FILE: modules/osint.py
+
+OBJECTIVE
+---------
+
+Collect information about people associated with the target organization,
+primarily email addresses and identities, to enrich the attack graph and
+potentially feed the phishing module.
+
+IMPLEMENTED SOURCES
+-------------------
+
+    1. PGP KEYSERVERS (Pretty Good Privacy)
+       
+       PGP key servers contain email addresses associated with public keys:
+       
+       Sources:
+       - keyserver.ubuntu.com
+       - pgp.mit.edu
+       - keys.openpgp.org
+       
+       Method:
+       → Search by domain: search=@{domain}
+       → Parse HTML to extract emails
+       
+       Advantages:
+       - No strict rate limiting
+       - Often up-to-date data
+       - Sometimes includes full names
+    
+    2. CERTIFICATE TRANSPARENCY (crt.sh)
+       
+       SSL certificates sometimes contain emails in:
+       - Subject Alternative Names (SAN)
+       - Organization fields
+       
+       Method:
+       → Same query as for subdomains
+       → Extract email fields
+    
+    3. GITHUB
+       
+       Public commits expose contributor emails:
+       
+       API: https://api.github.com/search/commits
+       Query: author-email:@{domain}
+       
+       Requires: GitHub token (to avoid rate limit)
+       
+       Extraction:
+       → Author email
+       → Author name
+       → Associated repository
+    
+    4. HUNTER.IO (Optional)
+       
+       Commercial professional email search service:
+       
+       API: https://api.hunter.io/v2/domain-search
+       Params: domain={domain}, api_key={key}
+       
+       Returns:
+       - Verified emails
+       - Organization's email pattern
+       - Result confidence
+    
+    5. DNS EMAIL HINTS
+       
+       DNS records reveal information about email infrastructure:
+       
+       - MX records → Email provider (Google, Microsoft, custom)
+       - SPF records → Authorized sending servers
+       - DMARC records → Email security policy
+       
+       This information allows:
+       - Identifying email provider
+       - Guessing address patterns
+       - Evaluating security maturity
+
+EMAIL VERIFICATION
+------------------
+
+    async def verify_email(email: str) -> bool:
+        """
+        Verify if an email address exists via SMTP.
+        
+        Method:
+        1. Resolve MX records for domain
+        2. SMTP connection to MX server
+        3. HELO/EHLO
+        4. MAIL FROM:<>
+        5. RCPT TO:<email>
+        6. Analyze response (250 = exists, 550 = doesn't exist)
+        
+        Warning:
+        - Some servers accept everything (catch-all)
+        - Some servers block this technique
+        - May trigger security alerts
+        """
+        
+        domain = email.split('@')[1]
+        
+        # Resolve MX
+        try:
+            mx_records = await resolver.resolve(domain, 'MX')
+            mx_host = str(sorted(mx_records, key=lambda x: x.preference)[0].exchange)
+        except:
+            return False
+        
+        # SMTP verification
+        try:
+            reader, writer = await asyncio.open_connection(mx_host, 25)
+            
+            # HELO
+            writer.write(b'HELO verify.local\r\n')
+            await writer.drain()
+            response = await reader.read(1024)
+            
+            # MAIL FROM
+            writer.write(b'MAIL FROM:<>\r\n')
+            await writer.drain()
+            response = await reader.read(1024)
+            
+            # RCPT TO
+            writer.write(f'RCPT TO:<{email}>\r\n'.encode())
+            await writer.drain()
+            response = await reader.read(1024)
+            
+            writer.close()
+            
+            return b'250' in response
+        except:
+            return False
+
+BREACH SEARCH (HIBP)
+--------------------
+
+    HaveIBeenPwned allows checking if an email has been compromised:
+    
+    API: https://haveibeenpwned.com/api/v3/breachedaccount/{email}
+    Headers: hibp-api-key: {api_key}
+    
+    Response: List of breaches where email appears
+    
+    async def check_breach(email: str) -> List[Breach]:
+        """Check if an email appears in data breaches."""
+        
+        if not self.hibp_api_key:
+            return []
+        
+        response = await client.get(
+            f"https://haveibeenpwned.com/api/v3/breachedaccount/{email}",
+            headers={"hibp-api-key": self.hibp_api_key}
+        )
+        
+        if response.status_code == 200:
+            return [
+                {
+                    "name": b["Name"],
+                    "date": b["BreachDate"],
+                    "data_types": b["DataClasses"],
+                }
+                for b in response.json()
+            ]
+        
+        return []
+
+
+--------------------------------------------------------------------------------
+                4.4 ACTIVE RECON MODULE (ACTIVE RECONNAISSANCE)
+--------------------------------------------------------------------------------
+
+FILE: modules/active_recon.py
+
+OBJECTIVE
+---------
+
+Perform active reconnaissance involving direct interaction with target systems.
+This module is optional and should only be used with authorization.
+
+DNS ZONE TRANSFER (AXFR)
+------------------------
+
+    Zone transfer allows retrieving all DNS records for a domain if the
+    server is misconfigured.
+    
+    async def attempt_zone_transfer(domain: str) -> List[str]:
+        """
+        Attempt DNS zone transfer.
+        
+        Sequence:
+        1. Get NS servers for domain
+        2. Try AXFR on each NS
+        3. Parse records if successful
+        """
+        
+        subdomains = []
+        
+        # Get NS servers
+        try:
+            ns_records = await resolver.resolve(domain, 'NS')
+            nameservers = [str(ns.target) for ns in ns_records]
+        except:
+            return []
+        
+        # Try AXFR on each NS
+        for ns in nameservers:
+            try:
+                logger.debug(f"Attempting AXFR against {ns}")
+                
+                zone = dns.zone.from_xfr(
+                    dns.query.xfr(ns, domain, timeout=10)
+                )
+                
+                for name, node in zone.nodes.items():
+                    subdomain = str(name)
+                    if subdomain != '@':
+                        subdomains.append(f"{subdomain}.{domain}")
+                
+                logger.info(f"Zone transfer successful from {ns}!")
+                break  # Success, no need to try others
+                
+            except dns.exception.FormError:
+                logger.debug(f"Zone transfer denied by {ns}")
+            except Exception as e:
+                logger.debug(f"AXFR error on {ns}: {e}")
+        
+        return subdomains
+    
+    Note: Zone transfers are rarely allowed on well-configured servers.
+    However, this technique remains useful as it can discover subdomains
+    not listed elsewhere.
+
+DIRECTORY ENUMERATION
+---------------------
+
+    Directory enumeration discovers hidden files and folders on a web server.
+    
+    DEFAULT WORDLIST:
+    
+        admin, api, backup, backups, config, console, dashboard,
+        debug, dev, docs, login, phpmyadmin, robots.txt, server-info,
+        server-status, sitemap.xml, staging, test, wp-admin, wp-login.php,
+        .env, .git, .htaccess, .htpasswd, graphql, swagger, ...
+    
+    async def enumerate_directories(base_url: str) -> List[Directory]:
+        """
+        Enumerate directories and files on a web server.
+        
+        Method:
+        - Async GET requests with semaphore
+        - Collect interesting response codes
+        - Detect redirects
+        """
+        
+        results = []
+        semaphore = asyncio.Semaphore(20)  # Max 20 concurrent
+        
+        async def check_path(path: str):
+            async with semaphore:
+                url = f"{base_url}/{path}"
+                try:
+                    response = await client.get(url, follow_redirects=False)
+                    
+                    # Interesting codes
+                    if response.status_code in [200, 201, 204]:
+                        return Directory(path, "Found", response.status_code)
+                    elif response.status_code in [301, 302, 307, 308]:
+                        location = response.headers.get("Location", "")
+                        return Directory(path, "Redirect", response.status_code, location)
+                    elif response.status_code == 403:
+                        return Directory(path, "Forbidden", 403)
+                    elif response.status_code == 401:
+                        return Directory(path, "Auth Required", 401)
+                
+                except:
+                    pass
+                
+                return None
+        
+        tasks = [check_path(word) for word in self.wordlist]
+        results = await asyncio.gather(*tasks)
+        
+        return [r for r in results if r is not None]
+
+
+--------------------------------------------------------------------------------
+                4.5 PORT INTEL MODULE (PORT INTELLIGENCE)
+--------------------------------------------------------------------------------
+
+FILE: modules/port_intel.py
+
+OBJECTIVE
+---------
+
+Retrieve information about open ports and exposed services without performing
+active scanning, using Shodan data.
+
+SHODAN INTEGRATION
+------------------
+
+    Shodan is a search engine for Internet-connected devices.
+    It continuously scans the Internet and indexes service banners.
+    
+    API: https://api.shodan.io/shodan/host/{ip}
+    
+    async def get_port_intel(ip: str) -> PortIntelResults:
+        """
+        Retrieve port information from Shodan.
+        
+        Returns:
+        - Open ports
+        - Service banners
+        - Shodan-detected vulnerabilities
+        - Geographic information
+        """
+        
+        if not self.shodan_api_key:
+            return PortIntelResults(ip=ip, ports=[])
+        
+        response = await client.get(
+            f"https://api.shodan.io/shodan/host/{ip}",
+            params={"key": self.shodan_api_key}
+        )
+        
+        if response.status_code == 200:
+            data = response.json()
+            
+            ports = []
+            for service in data.get("data", []):
+                ports.append({
+                    "port": service.get("port"),
+                    "protocol": service.get("transport", "tcp"),
+                    "service": service.get("product", "unknown"),
+                    "version": service.get("version"),
+                    "banner": service.get("data", "")[:200],
+                })
+            
+            return PortIntelResults(
+                ip=ip,
+                ports=ports,
+                hostnames=data.get("hostnames", []),
+                country=data.get("country_name"),
+                org=data.get("org"),
+                vulns=data.get("vulns", []),
+            )
+        
+        return PortIntelResults(ip=ip, ports=[])
+
+
+--------------------------------------------------------------------------------
+                4.6 PHISHING MODULE (PHISHING SIMULATION)
+--------------------------------------------------------------------------------
+
+FILE: modules/phishing.py
+
+OBJECTIVE
+---------
+
+Simulate phishing campaigns as part of authorized Red Team tests.
+This module tests employee awareness and email control effectiveness.
+
+    ⚠️  WARNING
+    
+    This module is intended ONLY for authorized testing.
+    Malicious use is illegal.
+
+EMAIL TEMPLATES
+---------------
+
+    4 predefined templates covering common scenarios:
+    
+    1. SECURITY_ALERT
+       
+       Subject: "[Urgent] Suspicious Activity Detected on Your Account"
+       Pretext: Suspicious activity, verification required
+       Urgency: High
+       
+    2. PASSWORD_EXPIRY
+       
+       Subject: "[Action Required] Your Password Expires in 24 Hours"
+       Pretext: Security policy, mandatory renewal
+       Urgency: Medium-High
+       
+    3. DOCUMENT_SHARE
+       
+       Subject: "Q4 Financial Report has been shared with you"
+       Pretext: Document shared by colleague
+       Urgency: Low (curiosity)
+       
+    4. IT_SUPPORT
+       
+       Subject: "[IT Support] Ticket #IT-SEC-2026-XXXX - Account Verification"
+       Pretext: IT ticket requiring action
+       Urgency: Medium
+
+LANDING PAGES
+-------------
+
+    Landing pages matching templates:
+    
+    - Microsoft 365 style (login.microsoftonline.com clone)
+    - Google style (accounts.google.com clone)
+    - Generic corporate portal
+    - Custom templates
+    
+    Each page captures:
+    - Email/Username
+    - Password
+    - Timestamp
+    - Source IP
+    - User-Agent
+
+TRACKING SERVER
+---------------
+
+    class PhishingServer:
+        """Flask server for tracking and capture."""
+        
+        def __init__(self, port: int = 5000):
+            self.app = Flask(__name__)
+            self.clicks = {}
+            self.credentials = []
+            
+            @self.app.route('/track/<encoded_email>')
+            def track_click(encoded_email):
+                """Record a click on phishing link."""
+                email = base64.b64decode(encoded_email).decode()
+                self.clicks[email] = {
+                    'timestamp': datetime.now(),
+                    'ip': request.remote_addr,
+                    'user_agent': request.headers.get('User-Agent'),
+                }
+                return redirect('/login')
+            
+            @self.app.route('/login', methods=['GET', 'POST'])
+            def login_page():
+                """Display landing page and capture credentials."""
+                if request.method == 'POST':
+                    self.credentials.append({
+                        'username': request.form.get('username'),
+                        'password': request.form.get('password'),
+                        'timestamp': datetime.now(),
+                        'ip': request.remote_addr,
+                    })
+                    return render_template('success.html')
+                return render_template(self.landing_template)
+            
+            @self.app.route('/status')
+            def status():
+                """Return campaign statistics."""
+                return jsonify({
+                    'clicks': len(self.clicks),
+                    'credentials': len(self.credentials),
+                    'details': {
+                        'clicks': self.clicks,
+                        'submissions': len(self.credentials),
+                    }
+                })
+
+EMAIL SENDING
+-------------
+
+    async def send_phishing_emails(targets: List[str], config: PhishingConfig):
+        """
+        Send phishing emails.
+        
+        Required config:
+        - SMTP host, port, user, password
+        - Selected template
+        - Tracking URL (ngrok or public server)
+        """
+        
+        results = {"sent": 0, "failed": 0}
+        
+        for email in targets:
+            try:
+                # Generate email
+                msg = MIMEMultipart('alternative')
+                msg['From'] = config.from_address
+                msg['To'] = email
+                msg['Subject'] = config.template.subject
+                
+                # Unique tracking URL
+                tracking_url = f"{config.tracking_host}/track/{encode(email)}"
+                
+                # Email body with personalized URL
+                body = config.template.body.format(
+                    email=email,
+                    tracking_url=tracking_url,
+                    company=config.company_name,
+                )
+                
+                msg.attach(MIMEText(body, 'html'))
+                
+                # SMTP send
+                with smtplib.SMTP(config.smtp_host, config.smtp_port) as server:
+                    server.starttls()
+                    server.login(config.smtp_user, config.smtp_pass)
+                    server.send_message(msg)
+                
+                results["sent"] += 1
+                await asyncio.sleep(1)  # Rate limiting
+                
+            except Exception as e:
+                results["failed"] += 1
+                logger.warning(f"Failed to send to {email}: {e}")
+        
+        return results
+
+
+--------------------------------------------------------------------------------
+                4.7 GRAPH ENGINE AND VISUALIZATION
+--------------------------------------------------------------------------------
+
+FILE: core/graph_engine.py
+
+OBJECTIVE
+---------
+
+Build a graph representing all relationships between discovered entities
+and generate an interactive HTML visualization.
+
+GRAPH CONSTRUCTION
+------------------
+
+    class AttackSurfaceGraph:
+        """Build and export attack graph."""
+        
+        def __init__(self):
+            self.graph = nx.DiGraph()  # Directed graph
+            self.node_styles = {
+                'domain':      {'shape': 'diamond', 'color': '#4B0082'},  # Indigo
+                'subdomain':   {'shape': 'dot',     'color': '#8B5CF6'},  # Purple
+                'ip':          {'shape': 'dot',     'color': '#22C55E'},  # Green
+                'cloud_ip':    {'shape': 'dot',     'color': '#F97316'},  # Orange
+                'technology':  {'shape': 'box',     'color': '#3B82F6'},  # Blue
+                'cve':         {'shape': 'triangle','color': '#EF4444'},  # Red
+                'email':       {'shape': 'box',     'color': '#EAB308'},  # Gold
+                'person':      {'shape': 'ellipse', 'color': '#EC4899'},  # Pink
+                'port':        {'shape': 'dot',     'color': '#06B6D4'},  # Cyan
+                'directory':   {'shape': 'box',     'color': '#14B8A6'},  # Teal
+            }
+        
+        def build(self, target: Target):
+            """Build graph from collected data."""
+            
+            # 1. Root node (domain)
+            self.add_node(target.domain, 'domain', label=target.domain)
+            
+            # 2. Subdomains
+            for asset in target.discovered_assets:
+                self.add_node(asset.hostname, 'subdomain', label=asset.hostname)
+                self.add_edge(target.domain, asset.hostname, 'has_subdomain')
+                
+                # 3. IPs
+                for ip in asset.ips:
+                    node_type = 'cloud_ip' if asset.cloud_providers else 'ip'
+                    self.add_node(ip, node_type, label=ip)
+                    self.add_edge(asset.hostname, ip, 'resolves_to')
+            
+            # 4. Technologies
+            for hostname, techs in target.technologies.items():
+                for tech in techs:
+                    tech_id = f"{tech.name}_{tech.version or 'unknown'}"
+                    label = f"{tech.name} {tech.version}" if tech.version else tech.name
+                    self.add_node(tech_id, 'technology', label=label)
+                    self.add_edge(hostname, tech_id, 'runs')
+                    
+                    # 5. CVEs
+                    for cve in tech.cves:
+                        cve_id = cve['cve_id']
+                        label = f"{cve_id}\n({cve['severity']})"
+                        self.add_node(cve_id, 'cve', label=label)
+                        self.add_edge(tech_id, cve_id, 'has_vulnerability')
+            
+            # 6. Emails and People
+            for email in target.osint_results.emails:
+                self.add_node(email, 'email', label=email)
+                self.add_edge(target.domain, email, 'associated_email')
+            
+            for person in target.osint_results.people:
+                person_id = person['name'].replace(' ', '_')
+                self.add_node(person_id, 'person', label=person['name'])
+                if person.get('email'):
+                    self.add_edge(person['email'], person_id, 'belongs_to')
+            
+            # 7. Ports (if Shodan data)
+            if target.port_intel_results:
+                for ip, ports in target.port_intel_results.items():
+                    for port in ports:
+                        port_id = f"{ip}:{port['port']}"
+                        label = f"{port['port']}/{port['protocol']}"
+                        self.add_node(port_id, 'port', label=label)
+                        self.add_edge(ip, port_id, 'has_port')
+            
+            # 8. Directories
+            if target.active_recon_results:
+                for directory in target.active_recon_results.directories:
+                    dir_id = f"dir_{directory.path}"
+                    self.add_node(dir_id, 'directory', label=directory.path)
+                    # Link to corresponding subdomain
+
+PYVIS EXPORT
+------------
+
+    def export_html(self, output_path: str):
+        """Export graph as interactive HTML with PyVis."""
+        
+        # Create PyVis network
+        net = Network(
+            height="800px",
+            width="100%",
+            bgcolor="#1a1a2e",
+            font_color="white",
+            directed=True,
+        )
+        
+        # Physics configuration
+        net.set_options("""
+        {
+            "physics": {
+                "barnesHut": {
+                    "gravitationalConstant": -30000,
+                    "centralGravity": 0.3,
+                    "springLength": 150,
+                    "springConstant": 0.04,
+                    "damping": 0.09
+                }
+            },
+            "interaction": {
+                "hover": true,
+                "navigationButtons": true,
+                "keyboard": true
+            }
+        }
+        """)
+        
+        # Add nodes
+        for node_id, data in self.graph.nodes(data=True):
+            net.add_node(
+                node_id,
+                label=data.get('label', node_id),
+                shape=data.get('shape', 'dot'),
+                color=data.get('color', '#666666'),
+                title=data.get('title', node_id),  # Tooltip
+            )
+        
+        # Add edges
+        for source, target, data in self.graph.edges(data=True):
+            net.add_edge(
+                source,
+                target,
+                title=data.get('relationship', ''),
+                color={'color': '#888888', 'opacity': 0.5},
+            )
+        
+        # Save
+        net.save_graph(output_path)
+
+
+--------------------------------------------------------------------------------
+                4.8 USER INTERFACE (CLI & WIZARD)
+--------------------------------------------------------------------------------
+
+FILE: main.py (CLI) and core/wizard.py (Wizard)
+
+CLI (COMMAND LINE INTERFACE)
+----------------------------
+
+    Main arguments:
+    
+    python main.py --target example.com              # Basic scan
+    python main.py --target example.com --mode active # Active scan
+    python main.py --input-file domains.txt          # Bulk scan
+    python main.py --interactive                     # Wizard mode
+    
+    Options:
+    
+    --output, -o          Output directory
+    --verbose, -v         Debug mode
+    --mode                passive, active, phishing, custom
+    --exclude             Patterns to exclude
+    --skip-osint          Skip OSINT phase
+    --use-system-dns      Use system DNS
+    --no-banner           Suppress banner
+    
+    API Keys:
+    
+    --shodan-key          Shodan API key
+    --hunter-key          Hunter.io API key
+    --nvd-key             NVD API key
+    --github-token        GitHub token
+    --hibp-key            HaveIBeenPwned API key
+
+INTERACTIVE WIZARD
+------------------
+
+    The wizard guides users through configuration:
+    
+    def run_wizard() -> ScanConfig:
+        """Launch interactive wizard."""
+        
+        # 1. Scan mode
+        mode = questionary.select(
+            "Select scan mode:",
+            choices=[
+                "Passive - OSINT + DNS only (safe)",
+                "Active - Full scan with directory enum",
+                "Phishing - Passive + phishing simulation",
+                "Custom - Select specific modules",
+            ]
+        ).ask()
+        
+        # 2. Target
+        target = questionary.text(
+            "Enter target domain:",
+            validate=lambda x: is_valid_domain(x)
+        ).ask()
+        
+        # 3. Modules (if Custom)
+        if mode == "Custom":
+            modules = questionary.checkbox(
+                "Select modules to run:",
+                choices=[
+                    "Subdomain Discovery",
+                    "DNS Resolution",
+                    "Technology Fingerprinting",
+                    "Vulnerability Mapping",
+                    "OSINT Collection",
+                    "Directory Enumeration",
+                    "Zone Transfer",
+                    "Port Intelligence",
+                    "Phishing Simulation",
+                ]
+            ).ask()
+        
+        # 4. API Keys
+        if questionary.confirm("Configure API keys?").ask():
+            nvd_key = questionary.text("NVD API key (optional):").ask()
+            shodan_key = questionary.text("Shodan API key (optional):").ask()
+            # ...
+        
+        # 5. Confirmation
+        print_config_summary(config)
+        if not questionary.confirm("Start scan?").ask():
+            return None
+        
+        return ScanConfig(...)
+
+
+================================================================================
+================================================================================
+                     PART V - RESULTS AND TESTING
+================================================================================
+================================================================================
+
+
+--------------------------------------------------------------------------------
+                        5.1 TEST SCENARIOS
+--------------------------------------------------------------------------------
+
+TEST ENVIRONMENT
+----------------
+
+    System       : Windows 11 / Python 3.11
+    Network      : 100 Mbps fiber connection
+    Targets      : Authorized test domains
+    
+    Tested domains:
+    - example.com (reference)
+    - testphp.vulnweb.com (intentionally vulnerable)
+    - tesla.com (real target, large scale)
+
+SCENARIO 1: BASIC PASSIVE SCAN
+------------------------------
+
+    Command: python main.py --target example.com --mode passive
+    
+    Expected results:
+    ✓ Subdomain discovery via CT
+    ✓ DNS resolution
+    ✓ Technology fingerprinting
+    ✓ OSINT collection
+    ✓ Graph generation
+    
+    Metrics:
+    - Duration: ~45 seconds
+    - Subdomains found: 5-10
+    - Technologies detected: 3-5
+    - Emails discovered: 0-5
+
+SCENARIO 2: FULL ACTIVE SCAN
+----------------------------
+
+    Command: python main.py --target testphp.vulnweb.com --mode active
+    
+    Expected results:
+    ✓ All passive scan results
+    ✓ Directory enumeration
+    ✓ Zone transfer attempt
+    ✓ CVEs for vulnerable technologies
+    
+    Metrics:
+    - Duration: ~120 seconds
+    - Directories found: 15-30
+    - CVEs mapped: 5-15
+
+SCENARIO 3: LARGE SCALE
+-----------------------
+
+    Command: python main.py --target tesla.com --mode passive --nvd-key KEY
+    
+    Expected results:
+    ✓ Large number of subdomains (100+)
+    ✓ Varied technologies
+    ✓ Numerous emails
+    ✓ Complex and navigable graph
+    
+    Metrics:
+    - Duration: ~5 minutes
+    - Subdomains: 150-500
+    - Technologies: 50-100
+    - Emails: 20-50
+
+
+--------------------------------------------------------------------------------
+                        5.2 OBTAINED RESULTS
+--------------------------------------------------------------------------------
+
+EXAMPLE RESULTS (tesla.com)
+---------------------------
+
+    ══════════════════════════════════════════════════════════════════════════
+    REDSURFACE SCAN RESULTS - tesla.com
+    ══════════════════════════════════════════════════════════════════════════
+    
+    INFRASTRUCTURE DISCOVERY
+    ────────────────────────
+    Subdomains found    : 147
+    Resolved hosts      : 89
+    Unique IPs          : 45
+    Cloud providers     : AWS, Cloudflare, Akamai
+    
+    TECHNOLOGY FINGERPRINTING
+    ─────────────────────────
+    Technologies found  : 72
+    WAFs detected       : 3 (Akamai, Cloudflare, F5)
+    
+    Top technologies:
+    - Nginx (23 hosts)
+    - React (15 hosts)
+    - Node.js (12 hosts)
+    - WordPress (6 hosts)
+    
+    VULNERABILITY MAPPING
+    ─────────────────────
+    CVEs found          : 6
+    Critical            : 0
+    High                : 2
+    Medium              : 4
+    Low                 : 0
+    
+    OSINT COLLECTION
+    ────────────────
+    Emails found        : 34
+    People identified   : 12
+    Breaches detected   : 0
+    
+    GRAPH
+    ─────
+    Total nodes         : 312
+    Total edges         : 456
+    
+    Files generated:
+    - tesla_com_results.json
+    - tesla_com_graph.html
+    - tesla_com_report.html
+
+GRAPH VISUALIZATION
+-------------------
+
+    The generated graph for tesla.com clearly shows:
+    
+    - The central domain with subdomains in orbit
+    - IP clusters by cloud provider
+    - Common technologies shared by multiple hosts
+    - CVEs linked to vulnerable technologies
+    - Associated emails and people
+
+
+--------------------------------------------------------------------------------
+                    5.3 PERFORMANCE AND OPTIMIZATION
+--------------------------------------------------------------------------------
+
+BENCHMARKS
+----------
+
+    ┌─────────────────────┬─────────────┬─────────────┬─────────────┐
+    │ Phase               │ example.com │ vulnweb     │ tesla.com   │
+    ├─────────────────────┼─────────────┼─────────────┼─────────────┤
+    │ Discovery           │ 12s         │ 15s         │ 85s         │
+    │ Fingerprinting      │ 8s          │ 12s         │ 45s         │
+    │ CVE Mapping         │ 5s          │ 8s          │ 25s         │
+    │ OSINT               │ 15s         │ 18s         │ 40s         │
+    │ Active Recon        │ N/A         │ 60s         │ N/A         │
+    │ Graph Generation    │ 1s          │ 2s          │ 4s          │
+    │ ─────────────────── │ ─────────── │ ─────────── │ ─────────── │
+    │ TOTAL               │ 41s         │ 115s        │ 199s        │
+    └─────────────────────┴─────────────┴─────────────┴─────────────┘
+
+IMPLEMENTED OPTIMIZATIONS
+-------------------------
+
+    1. ASYNCHRONISM
+       
+       All I/O operations are asynchronous, enabling:
+       - Parallel DNS resolution (30 concurrent max)
+       - Parallel HTTP requests (20 concurrent max)
+       - Time savings: ~5x compared to synchronous
+    
+    2. CACHING
+       
+       - NVD results cache (avoid duplicate requests)
+       - DNS resolution cache
+       - Savings: ~30% on repeated scans
+    
+    3. INTELLIGENT RETRY
+       
+       - Exponential backoff on errors
+       - Automatic fallback to alternative sources
+       - Savings: ~20% more results
+    
+    4. PROACTIVE RATE LIMITING
+       
+       - Request counter for NVD
+       - Delays between SMTP requests
+       - Avoids bans and 429 errors
+
+
+--------------------------------------------------------------------------------
+                       5.4 IDENTIFIED LIMITATIONS
+--------------------------------------------------------------------------------
+
+TECHNICAL LIMITATIONS
+---------------------
+
+    1. DEPENDENCY ON EXTERNAL SERVICES
+       
+       Problem: crt.sh often overloaded (503)
+       Impact:  Incomplete subdomain discovery
+       Solution: Implementation of fallback sources
+    
+    2. NVD RATE LIMITING
+       
+       Problem: 5 req/30s without API key
+       Impact:  Incomplete CVE mapping on large targets
+       Solution: Cache + mock database + API key recommendation
+    
+    3. FINGERPRINTING FALSE NEGATIVES
+       
+       Problem: Undetected technologies
+       Impact:  Incomplete mapping
+       Solution: Continuous extension of pattern database
+
+FUNCTIONAL LIMITATIONS
+----------------------
+
+    1. NO ACTIVE VULNERABILITY SCANNING
+       
+       RedSurface doesn't actively test vulnerabilities.
+       It only maps technologies to known CVEs.
+    
+    2. LIMITED OSINT WITHOUT API KEYS
+       
+       Without Hunter.io, GitHub token, HIBP key, OSINT results
+       are significantly reduced.
+    
+    3. PHISHING REQUIRES INFRASTRUCTURE
+       
+       The phishing module requires:
+       - Configured SMTP server
+       - Public URL for tracking (ngrok or server)
+
+
+================================================================================
+================================================================================
+                PART VI - CONCLUSION AND PERSPECTIVES
+================================================================================
+================================================================================
+
+
+--------------------------------------------------------------------------------
+                         6.1 PROJECT SUMMARY
+--------------------------------------------------------------------------------
+
+OBJECTIVES ACHIEVED
+-------------------
+
+    ✓ SO1: Infrastructure Discovery
+      → CT enumeration, async DNS, cloud detection, SSL analysis
+    
+    ✓ SO2: Technology Fingerprinting
+      → Header, HTML, cookie detection, WAF (50+ technologies)
+    
+    ✓ SO3: Vulnerability Mapping
+      → NVD API integration, CVSS extraction, mock fallback
+    
+    ✓ SO4: OSINT Collection
+      → PGP, GitHub, Hunter.io, DNS hints, HIBP
+    
+    ✓ SO5: Active Reconnaissance
+      → Zone transfer, directory enumeration
+    
+    ✓ SO6: Phishing Simulation
+      → Templates, landing pages, tracking server
+    
+    ✓ SO7: Interactive Visualization
+      → NetworkX graph, PyVis HTML export
+    
+    ✓ SO8: User Interface
+      → Complete CLI, interactive wizard, HTML reports
+
+PROJECT METRICS
+---------------
+
+    Lines of code      : ~5,000
+    Modules            : 6 main + 3 utilities
+    Dependencies       : 10 Python libraries
+    Detection patterns : 100+ (technologies, WAF, CVE)
+    Phishing templates : 4 emails + 7 landing pages
+    Development time   : ~3 months
+
+
+--------------------------------------------------------------------------------
+                       6.2 ACQUIRED SKILLS
+--------------------------------------------------------------------------------
+
+TECHNICAL SKILLS
+----------------
+
+    1. ASYNCHRONOUS PROGRAMMING
+       
+       - Mastery of asyncio and async/await
+       - Concurrency management with Semaphore
+       - Optimization of I/O bound operations
+    
+    2. NETWORK PROTOCOLS
+       
+       - DNS: A, AAAA, CNAME, MX, TXT, NS, AXFR
+       - HTTP/HTTPS: Headers, cookies, SSL/TLS
+       - SMTP: Email verification
+    
+    3. APIS AND INTEGRATION
+       
+       - REST APIs (NVD, Shodan, Hunter.io)
+       - Rate limiting management
+       - JSON parsing and error handling
+    
+    4. DATA VISUALIZATION
+       
+       - Graph theory (NetworkX)
+       - Interactive visualization (PyVis, vis.js)
+       - HTML report generation
+
+SECURITY SKILLS
+---------------
+
+    1. RECONNAISSANCE
+       
+       - PTES, MITRE ATT&CK methodologies
+       - OSINT sources and CT logs
+       - Enumeration techniques
+    
+    2. FINGERPRINTING
+       
+       - Web technology identification
+       - WAF detection
+       - CVE correlation
+    
+    3. RED TEAM OPERATIONS
+       
+       - Phishing simulation
+       - Campaign planning
+       - Ethical and legal considerations
+
+
+--------------------------------------------------------------------------------
+                       6.3 FUTURE IMPROVEMENTS
+--------------------------------------------------------------------------------
+
+SHORT TERM (< 3 months)
+-----------------------
+
+    1. ADDITIONAL SOURCES
+       
+       - SecurityTrails API
+       - Censys Search
+       - VirusTotal domain reports
+       - Wayback Machine
+    
+    2. FINGERPRINTING IMPROVEMENTS
+       
+       - Update pattern database
+       - More precise JavaScript framework detection
+       - Improved version extraction
+    
+    3. ADDITIONAL EXPORTS
+       
+       - CSV/Excel export
+       - Markdown export
+       - Notion/Confluence integration
+
+MEDIUM TERM (3-6 months)
+------------------------
+
+    1. WEB INTERFACE
+       
+       - Flask/React dashboard
+       - Real-time visualization
+       - Multi-target management
+    
+    2. VULNERABILITY SCANNING
+       
+       - Nuclei templates integration
+       - Basic XSS/SQLi tests
+       - CVE validation
+    
+    3. AUTOMATION
+       
+       - Scheduled scans (cron)
+       - Change alerts
+       - Historical comparison
+
+LONG TERM (> 6 months)
+----------------------
+
+    1. ARTIFICIAL INTELLIGENCE
+       
+       - Automatic asset classification
+       - Vulnerability prioritization
+       - Anomaly detection
+    
+    2. CLOUD DEPLOYMENT
+       
+       - SaaS version
+       - Public API
+       - Multi-tenant
+    
+    3. INTEGRATIONS
+       
+       - SIEM (Splunk, ELK)
+       - Ticketing (Jira, ServiceNow)
+       - CI/CD security scanning
+
+
+--------------------------------------------------------------------------------
+                        6.4 GENERAL CONCLUSION
+--------------------------------------------------------------------------------
+
+This Final Year Project enabled the design and development of RedSurface,
+a comprehensive external reconnaissance and attack surface mapping tool.
+
+The tool addresses identified problems by offering:
+
+    - VERTICAL INTEGRATION of different reconnaissance phases
+    - AUTOMATIC CORRELATION of collected data
+    - INTERACTIVE VISUALIZATION via attack graphs
+    - FLEXIBILITY of use through different scan modes
+
+From an educational perspective, this project allowed acquiring practical
+skills in security tool development, asynchronous programming, and
+Red Team methodologies.
+
+RedSurface provides a solid foundation for future improvements and could
+evolve into a professional tool usable in real penetration testing and
+security audit contexts.
+
+Open-sourcing the project also allows the community to contribute to its
+improvement and adapt it to specific needs.
+
+
+================================================================================
+================================================================================
+                              END OF REPORT
+================================================================================
+================================================================================
+
+
+    Project         : Mini Red Team Project - RedSurface
+    Version         : 1.4.0
+    Date            : January 2026
+    Repository      : https://github.com/Skyrxin/RedSurface
+    
+    Technologies    : Python 3.9+, asyncio, httpx, dnspython, NetworkX, 
+                      PyVis, Flask, questionary
+    
+    Keywords        : Reconnaissance, Attack Surface, Red Team, OSINT,
+                      Fingerprinting, CVE, Phishing, Graph Visualization
+
+
+================================================================================

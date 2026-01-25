@@ -1,0 +1,649 @@
+================================================================================
+                         MINI RED TEAM PROJECT REPORT
+                              REDSURFACE v1.4.0
+                   Attack Surface Intelligence Graph Generator
+================================================================================
+
+                              INTERNSHIP PROJECT
+                                January 2026
+
+================================================================================
+                            TABLE OF CONTENTS
+================================================================================
+
+1. INTRODUCTION
+2. PROJECT MOTIVATION
+3. TOOL OVERVIEW
+4. ARCHITECTURE & COMPONENTS
+5. TECHNICAL IMPLEMENTATION
+6. SCAN MODES
+7. MODULE DESCRIPTIONS
+8. DATA FLOW & PIPELINE
+9. OUTPUT & VISUALIZATION
+10. SECURITY CONSIDERATIONS
+11. CONCLUSION
+
+================================================================================
+                           1. INTRODUCTION
+================================================================================
+
+RedSurface is a comprehensive, modular Python CLI tool designed for external
+reconnaissance and attack surface mapping. Developed as part of our internship
+"Mini Red Team Project," this tool automates the process of discovering,
+analyzing, and visualizing an organization's external attack surface.
+
+The tool combines multiple reconnaissance techniques into a unified workflow,
+producing an interactive graph visualization that maps the relationships
+between discovered assets, technologies, vulnerabilities, and personnel.
+
+================================================================================
+                        2. PROJECT MOTIVATION
+================================================================================
+
+WHY WE BUILT THIS TOOL:
+-----------------------
+
+In modern cybersecurity, understanding an organization's attack surface is
+critical for both offensive (red team) and defensive (blue team) operations.
+The attack surface encompasses all points where an attacker could potentially
+gain unauthorized access or extract data.
+
+Traditional reconnaissance is:
+  - Time-consuming: Manual enumeration of subdomains, technologies, and 
+    vulnerabilities requires significant effort
+  - Fragmented: Security professionals often use multiple disconnected tools
+  - Difficult to visualize: Raw data doesn't show relationships between assets
+
+RedSurface addresses these challenges by:
+
+  1. AUTOMATION: Automating repetitive reconnaissance tasks that would take
+     hours to perform manually
+  
+  2. INTEGRATION: Combining multiple data sources (Certificate Transparency,
+     DNS, OSINT, NVD) into a single workflow
+  
+  3. VISUALIZATION: Generating interactive graphs that reveal the
+     relationships between discovered assets
+  
+  4. MODULARITY: Allowing users to select specific modules based on their
+     needs (passive vs active reconnaissance)
+  
+  5. EDUCATION: Providing hands-on experience with real-world red team
+     methodologies and techniques
+
+LEARNING OBJECTIVES:
+--------------------
+  - Understanding external reconnaissance methodologies
+  - Working with asynchronous Python programming (asyncio)
+  - API integration (NVD, Shodan, Hunter.io, etc.)
+  - Network programming (DNS resolution, HTTP analysis)
+  - Data visualization (NetworkX, PyVis)
+  - Security tool development best practices
+
+================================================================================
+                          3. TOOL OVERVIEW
+================================================================================
+
+WHAT REDSURFACE DOES:
+---------------------
+
+RedSurface performs comprehensive external reconnaissance on target domains:
+
+  [1] INFRASTRUCTURE DISCOVERY
+      - Subdomain enumeration via Certificate Transparency logs
+      - DNS resolution (A, AAAA, CNAME records)
+      - Cloud provider detection (AWS, Azure, GCP, Cloudflare)
+      - SSL/TLS certificate analysis
+
+  [2] TECHNOLOGY FINGERPRINTING
+      - HTTP header analysis
+      - Web technology detection (CMS, frameworks, libraries)
+      - WAF (Web Application Firewall) detection
+      - Version extraction for vulnerability mapping
+
+  [3] VULNERABILITY MAPPING
+      - Real-time CVE lookup via NVD (National Vulnerability Database)
+      - Technology-to-vulnerability correlation
+      - Severity scoring (CVSS)
+      - Mock database fallback for offline operation
+
+  [4] OSINT COLLECTION
+      - Email discovery (PGP keyservers, GitHub, crt.sh)
+      - Personnel identification
+      - Breach detection (HaveIBeenPwned integration)
+      - DNS-based email hints (MX, SPF records)
+
+  [5] ACTIVE RECONNAISSANCE (Optional)
+      - Directory/file enumeration
+      - DNS zone transfer attempts
+      - Service discovery
+
+  [6] PORT INTELLIGENCE (Optional)
+      - Shodan API integration
+      - Open port discovery
+      - Service banner analysis
+
+  [7] PHISHING SIMULATION (Optional)
+      - Email campaign generation
+      - Landing page hosting
+      - Click tracking
+      - Credential capture (for authorized testing)
+
+  [8] ATTACK GRAPH GENERATION
+      - Interactive HTML visualization
+      - Node relationship mapping
+      - Professional HTML reports
+      - JSON data export
+
+================================================================================
+                      4. ARCHITECTURE & COMPONENTS
+================================================================================
+
+PROJECT STRUCTURE:
+------------------
+
+redsurface/
+├── main.py                 # CLI entry point & orchestration
+├── core/
+│   ├── config.py           # Scan configuration & modes
+│   ├── target.py           # Target state management
+│   ├── wizard.py           # Interactive CLI wizard
+│   ├── graph.py            # Graph data structures
+│   └── graph_engine.py     # NetworkX + PyVis graph builder
+├── modules/
+│   ├── discovery.py        # Subdomain & DNS resolution
+│   ├── fingerprint.py      # Technology & WAF detection
+│   ├── osint.py            # Email & people discovery
+│   ├── active_recon.py     # Directory enum & zone transfer
+│   ├── port_intel.py       # Shodan port intelligence
+│   └── phishing.py         # Phishing simulation
+├── utils/
+│   ├── logger.py           # Colored logging system
+│   ├── output.py           # File output helpers
+│   └── report_generator.py # HTML report generation
+├── lib/                    # Frontend assets (vis.js, tom-select)
+└── output/                 # Scan results directory
+
+COMPONENT RELATIONSHIPS:
+------------------------
+
+                    ┌─────────────────────┐
+                    │      main.py        │
+                    │   (Orchestrator)    │
+                    └──────────┬──────────┘
+                               │
+           ┌───────────────────┼───────────────────┐
+           │                   │                   │
+           ▼                   ▼                   ▼
+    ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+    │   wizard    │     │   config    │     │   target    │
+    │ (User Input)│     │  (Settings) │     │   (State)   │
+    └─────────────┘     └─────────────┘     └─────────────┘
+                               │
+        ┌──────────────────────┼──────────────────────┐
+        │              │               │              │
+        ▼              ▼               ▼              ▼
+  ┌──────────┐  ┌────────────┐  ┌──────────┐  ┌────────────┐
+  │discovery │  │fingerprint │  │  osint   │  │active_recon│
+  │ (DNS)    │  │  (Tech)    │  │ (People) │  │  (Dirs)    │
+  └──────────┘  └────────────┘  └──────────┘  └────────────┘
+        │              │               │              │
+        └──────────────┴───────┬───────┴──────────────┘
+                               │
+                               ▼
+                    ┌─────────────────────┐
+                    │    graph_engine     │
+                    │  (Visualization)    │
+                    └──────────┬──────────┘
+                               │
+                ┌──────────────┼──────────────┐
+                │              │              │
+                ▼              ▼              ▼
+          ┌──────────┐  ┌──────────┐  ┌──────────┐
+          │  .html   │  │  .json   │  │  report  │
+          │ (Graph)  │  │  (Data)  │  │  (HTML)  │
+          └──────────┘  └──────────┘  └──────────┘
+
+================================================================================
+                      5. TECHNICAL IMPLEMENTATION
+================================================================================
+
+KEY TECHNOLOGIES USED:
+----------------------
+
+  LANGUAGE:       Python 3.9+
+  ASYNC:          asyncio, httpx (async HTTP client)
+  DNS:            dnspython (async DNS resolution)
+  GRAPH:          NetworkX (graph algorithms), PyVis (visualization)
+  CLI:            argparse, questionary (interactive prompts)
+  WEB:            Flask (phishing server), Jinja2 (templating)
+  DATA:           JSON, dataclasses
+
+ASYNCHRONOUS DESIGN:
+--------------------
+
+RedSurface uses Python's asyncio for concurrent operations:
+
+  - DNS resolution runs in parallel with semaphore-based rate limiting
+  - HTTP requests use connection pooling via httpx.AsyncClient
+  - Multiple subdomains are processed simultaneously
+  - Rate limiting prevents API abuse and detection
+
+Example async pattern used throughout:
+
+    async def resolve_subdomains(subdomains: List[str]) -> List[Asset]:
+        semaphore = asyncio.Semaphore(30)  # Limit concurrency
+        
+        async def resolve_one(subdomain: str) -> Optional[Asset]:
+            async with semaphore:
+                return await self.resolve_dns(subdomain)
+        
+        tasks = [resolve_one(sub) for sub in subdomains]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        return [r for r in results if isinstance(r, Asset)]
+
+DNS RESOLUTION WITH RETRY:
+--------------------------
+
+DNS queries include intelligent retry logic:
+
+  - timeout: Per-DNS-server query timeout (5 seconds default)
+  - lifetime: Total time for resolution including retries (15 seconds)
+  - Automatic retry on timeout (up to 2 retries)
+  - Multiple DNS servers (8.8.8.8, 1.1.1.1, 9.9.9.9)
+
+RATE LIMITING:
+--------------
+
+External API calls are rate-limited to avoid bans:
+
+  - NVD API: 5 req/30s (without key), 50 req/30s (with key)
+  - crt.sh: Automatic retry on 503 with exponential backoff
+  - Shodan: Respects API rate limits
+
+================================================================================
+                           6. SCAN MODES
+================================================================================
+
+RedSurface offers four scan modes:
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ MODE     │ DESCRIPTION                        │ TARGET INTERACTION         │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ PASSIVE  │ OSINT + DNS only                   │ None (uses public data)    │
+│ ACTIVE   │ Full scan with directory enum      │ Direct HTTP requests       │
+│ PHISHING │ Passive recon + phishing campaign  │ Email + landing pages      │
+│ CUSTOM   │ User-selected modules              │ Depends on selection       │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+PASSIVE MODE:
+  - Safe for initial reconnaissance
+  - No direct connection to target infrastructure
+  - Uses Certificate Transparency, public DNS, OSINT sources
+
+ACTIVE MODE:
+  - Includes directory bruteforcing
+  - Attempts DNS zone transfers
+  - More likely to be detected by target
+
+PHISHING MODE:
+  - Designed for authorized red team exercises
+  - Requires SMTP configuration
+  - Includes click tracking and credential capture
+
+CUSTOM MODE:
+  - Checkbox selection of individual modules
+  - Maximum flexibility
+  - Ideal for targeted assessments
+
+================================================================================
+                        7. MODULE DESCRIPTIONS
+================================================================================
+
+MODULE: discovery.py
+--------------------
+PURPOSE: Infrastructure discovery and DNS resolution
+
+FEATURES:
+  - Certificate Transparency subdomain enumeration (crt.sh, CertSpotter)
+  - Async DNS resolution with retry logic
+  - Cloud provider detection from CNAME records
+  - SSL certificate analysis
+
+DATA SOURCES:
+  - crt.sh (primary)
+  - CertSpotter (fallback)
+  - HackerTarget (fallback)
+  - Direct DNS queries
+
+OUTPUT:
+  - List of DiscoveredAsset objects containing:
+    - hostname, IPs, CNAMEs
+    - cloud_providers, ssl_info
+    - is_alive status
+
+--------------------------------------------------------------------------------
+
+MODULE: fingerprint.py
+----------------------
+PURPOSE: Technology detection and vulnerability mapping
+
+FEATURES:
+  - HTTP header analysis (Server, X-Powered-By, etc.)
+  - HTML content pattern matching (Wappalyzer-style)
+  - Cookie-based technology detection
+  - WAF detection
+  - Real-time NVD CVE lookup
+
+DETECTION PATTERNS:
+  - 50+ server technologies
+  - 30+ JavaScript frameworks
+  - 20+ CMS platforms
+  - 15+ WAF products
+
+VULNERABILITY MAPPING:
+  - Queries NVD API with technology + version
+  - Extracts CVSS score and severity
+  - Falls back to mock database if rate-limited
+
+--------------------------------------------------------------------------------
+
+MODULE: osint.py
+----------------
+PURPOSE: Email and personnel discovery
+
+FEATURES:
+  - PGP keyserver queries (Ubuntu, MIT, OpenPGP)
+  - GitHub commit email extraction
+  - Hunter.io integration (with API key)
+  - crt.sh email extraction from certificates
+  - DNS-based email hints (MX, SPF, DMARC)
+  - Email verification (SMTP check)
+  - HaveIBeenPwned breach detection
+
+OUTPUT:
+  - OSINTResults containing:
+    - emails: List of discovered email addresses
+    - people: List of identified personnel
+    - breach_data: Breach information per email
+
+--------------------------------------------------------------------------------
+
+MODULE: active_recon.py
+-----------------------
+PURPOSE: Active reconnaissance techniques
+
+FEATURES:
+  - Directory/file enumeration
+  - DNS zone transfer (AXFR) attempts
+  - Custom wordlist support
+
+CAUTION:
+  - Creates direct connections to target
+  - May trigger security alerts
+  - Use only with authorization
+
+--------------------------------------------------------------------------------
+
+MODULE: port_intel.py
+---------------------
+PURPOSE: Port and service intelligence via Shodan
+
+FEATURES:
+  - IP-to-port mapping
+  - Service banner extraction
+  - Historical scan data
+
+REQUIREMENTS:
+  - Shodan API key
+
+--------------------------------------------------------------------------------
+
+MODULE: phishing.py
+-------------------
+PURPOSE: Phishing simulation for red team exercises
+
+FEATURES:
+  - Pre-built email templates:
+    - Security Alert
+    - Password Expiry
+    - Document Share
+    - IT Support
+  
+  - Matching landing pages:
+    - Microsoft 365 style
+    - Google style
+    - Generic corporate
+    - Custom templates
+  
+  - Flask-based tracking server:
+    - Click tracking
+    - Credential capture
+    - Real-time statistics
+
+CAUTION:
+  - For authorized testing only
+  - Requires SMTP configuration
+  - May violate laws if misused
+
+================================================================================
+                       8. DATA FLOW & PIPELINE
+================================================================================
+
+SCAN EXECUTION PIPELINE:
+------------------------
+
+    ┌─────────────────────────────────────────────────────────────────┐
+    │                        USER INPUT                               │
+    │  (--target domain.com OR --interactive)                         │
+    └─────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+    ┌─────────────────────────────────────────────────────────────────┐
+    │                    PHASE 1: CONFIGURATION                       │
+    │  - Parse arguments or run wizard                                │
+    │  - Create ScanConfig with mode and options                      │
+    │  - Initialize Target object                                     │
+    └─────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+    ┌─────────────────────────────────────────────────────────────────┐
+    │                    PHASE 2: DISCOVERY                           │
+    │  - Query crt.sh for subdomains                                  │
+    │  - Resolve DNS for each subdomain                               │
+    │  - Detect cloud providers                                       │
+    │  - Analyze SSL certificates                                     │
+    └─────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+    ┌─────────────────────────────────────────────────────────────────┐
+    │                   PHASE 3: FINGERPRINTING                       │
+    │  - Fetch HTTP headers from live hosts                           │
+    │  - Detect technologies from headers/content                     │
+    │  - Identify WAFs                                                │
+    └─────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+    ┌─────────────────────────────────────────────────────────────────┐
+    │                PHASE 4: VULNERABILITY MAPPING                   │
+    │  - Query NVD for each technology                                │
+    │  - Extract CVEs with severity scores                            │
+    │  - Map vulnerabilities to assets                                │
+    └─────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+    ┌─────────────────────────────────────────────────────────────────┐
+    │                    PHASE 5: OSINT                               │
+    │  - Query PGP keyservers                                         │
+    │  - Search GitHub for emails                                     │
+    │  - Extract emails from certificates                             │
+    │  - Check breaches (HIBP)                                        │
+    └─────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+    ┌─────────────────────────────────────────────────────────────────┐
+    │              PHASE 6: ACTIVE RECON (if enabled)                 │
+    │  - Attempt zone transfers                                       │
+    │  - Enumerate directories                                        │
+    └─────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+    ┌─────────────────────────────────────────────────────────────────┐
+    │             PHASE 7: PORT INTEL (if Shodan key)                 │
+    │  - Query Shodan for open ports                                  │
+    │  - Extract service banners                                      │
+    └─────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+    ┌─────────────────────────────────────────────────────────────────┐
+    │              PHASE 8: PHISHING (if enabled)                     │
+    │  - Generate phishing emails                                     │
+    │  - Start tracking server                                        │
+    │  - Send campaign                                                │
+    └─────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+    ┌─────────────────────────────────────────────────────────────────┐
+    │                   PHASE 9: GRAPH GENERATION                     │
+    │  - Build NetworkX graph from all data                           │
+    │  - Create nodes (domain, subdomain, IP, tech, CVE, etc.)        │
+    │  - Create edges (relationships)                                 │
+    │  - Export to PyVis HTML                                         │
+    └─────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+    ┌─────────────────────────────────────────────────────────────────┐
+    │                     PHASE 10: OUTPUT                            │
+    │  - Save JSON results                                            │
+    │  - Generate HTML report                                         │
+    │  - Export interactive graph                                     │
+    └─────────────────────────────────────────────────────────────────┘
+
+================================================================================
+                       9. OUTPUT & VISUALIZATION
+================================================================================
+
+OUTPUT FILES:
+-------------
+
+  domain_results.json     Raw scan data in JSON format
+  domain_graph.json       Graph structure (nodes + edges)
+  domain_graph.html       Interactive vis.js visualization
+  domain_report.html      Professional HTML report
+  redsurface.log          Detailed scan log
+
+GRAPH VISUALIZATION:
+--------------------
+
+The attack graph uses vis.js for interactive visualization:
+
+  NODE TYPES:
+  ┌──────────────┬─────────┬─────────┬──────────────────────────────┐
+  │ Type         │ Shape   │ Color   │ Description                  │
+  ├──────────────┼─────────┼─────────┼──────────────────────────────┤
+  │ Domain       │ Diamond │ Indigo  │ Root target domain           │
+  │ Subdomain    │ Dot     │ Purple  │ Discovered subdomains        │
+  │ IP           │ Dot     │ Green   │ Resolved IP addresses        │
+  │ Cloud IP     │ Dot     │ Orange  │ Cloud-hosted IPs             │
+  │ Technology   │ Box     │ Blue    │ Detected technologies        │
+  │ Vulnerability│ Triangle│ Red     │ Mapped CVEs                  │
+  │ Email        │ Box     │ Gold    │ Discovered email addresses   │
+  │ Person       │ Ellipse │ Pink    │ Identified personnel         │
+  │ Port         │ Dot     │ Cyan    │ Open ports/services          │
+  │ Directory    │ Box     │ Teal    │ Discovered directories       │
+  └──────────────┴─────────┴─────────┴──────────────────────────────┘
+
+  EDGE RELATIONSHIPS:
+  - Domain → Subdomain (has_subdomain)
+  - Subdomain → IP (resolves_to)
+  - Subdomain → Technology (runs)
+  - Technology → Vulnerability (has_vulnerability)
+  - Domain → Email (associated_email)
+  - Email → Person (belongs_to)
+  - IP → Port (has_port)
+
+HTML REPORT:
+------------
+
+The HTML report includes:
+  - Executive summary with key statistics
+  - Subdomain inventory table
+  - Technology stack breakdown
+  - Vulnerability severity chart
+  - Email and personnel list
+  - Recommendations section
+
+================================================================================
+                     10. SECURITY CONSIDERATIONS
+================================================================================
+
+ETHICAL USE:
+------------
+
+RedSurface is designed for AUTHORIZED security testing only. Users must:
+
+  1. Obtain written permission before scanning any target
+  2. Respect rate limits to avoid service disruption
+  3. Never use phishing features without explicit authorization
+  4. Comply with local laws and regulations
+
+LEGAL DISCLAIMER:
+-----------------
+
+Unauthorized use of this tool may violate:
+  - Computer Fraud and Abuse Act (US)
+  - Computer Misuse Act (UK)
+  - GDPR (EU) for personal data collection
+  - Various national cybercrime laws
+
+The developers assume no liability for misuse.
+
+DETECTION CONSIDERATIONS:
+-------------------------
+
+Active scanning may trigger:
+  - IDS/IPS alerts
+  - WAF blocking
+  - Security team investigations
+  - Rate limiting
+
+Passive mode is recommended for initial reconnaissance.
+
+================================================================================
+                          11. CONCLUSION
+================================================================================
+
+RedSurface demonstrates the core concepts of external reconnaissance in a
+practical, hands-on tool. Through this internship project, we have:
+
+TECHNICAL ACHIEVEMENTS:
+  - Built a fully functional reconnaissance tool
+  - Implemented asynchronous Python programming
+  - Integrated multiple external APIs
+  - Created interactive data visualizations
+  - Developed a modular, extensible architecture
+
+LEARNING OUTCOMES:
+  - Understanding of attack surface mapping
+  - Experience with red team methodologies
+  - Knowledge of DNS, HTTP, and SSL protocols
+  - Familiarity with OSINT techniques
+  - Awareness of security and ethical considerations
+
+FUTURE ENHANCEMENTS:
+  - Additional subdomain sources (SecurityTrails, Censys)
+  - Automated vulnerability scanning
+  - Integration with other tools (Nmap, Nuclei)
+  - Machine learning for anomaly detection
+  - Cloud deployment option
+
+================================================================================
+                              END OF REPORT
+================================================================================
+
+Project:    Mini Red Team Project - RedSurface
+Version:    1.4.0
+Date:       January 2026
+Repository: https://github.com/Skyrxin/RedSurface
+
+================================================================================
