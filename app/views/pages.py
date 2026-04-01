@@ -6,12 +6,24 @@ from fastapi import APIRouter, Request, Depends
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
-from app.database import Scan, ScanResult, get_db
+from app.database import Scan, ScanResult, ModuleConfig, get_db
 
 TEMPLATES_DIR = Path(__file__).parent.parent / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 router = APIRouter()
+
+
+def _hydrate_plugin_keys(db: Session):
+    """Load API keys from DB into in-memory plugin objects so is_ready() is accurate."""
+    from plugins import registry
+    configs = db.query(ModuleConfig).all()
+    key_map = {c.module_name: c for c in configs}
+    for plugin in registry.all():
+        mc = key_map.get(plugin.name)
+        if mc and mc.api_key:
+            keys = {kn: mc.api_key for kn in plugin.api_key_names}
+            plugin.configure(api_keys=keys)
 
 
 @router.get("/")
@@ -37,9 +49,10 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/scan/new")
-def new_scan(request: Request):
+def new_scan(request: Request, db: Session = Depends(get_db)):
     """New scan configuration page."""
     from plugins import registry
+    _hydrate_plugin_keys(db)
     modules = registry.info_all()
     return templates.TemplateResponse(request, "scan_new.html", context={
         "modules": modules,
@@ -115,9 +128,10 @@ def scan_report(request: Request, scan_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/modules")
-def modules_page(request: Request):
+def modules_page(request: Request, db: Session = Depends(get_db)):
     """Browse and configure modules page."""
     from plugins import registry
+    _hydrate_plugin_keys(db)
     modules = registry.info_all()
     return templates.TemplateResponse(request, "modules.html", context={
         "modules": modules,
