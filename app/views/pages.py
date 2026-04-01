@@ -29,8 +29,7 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
         "completed": db.query(Scan).filter(Scan.status == "completed").count(),
         "total_results": total_results,
     }
-    return templates.TemplateResponse("dashboard.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "dashboard.html", context={
         "recent_scans": [s.to_dict() for s in recent_scans],
         "stats": stats,
         "modules_count": len(registry.info_all()),
@@ -42,8 +41,7 @@ def new_scan(request: Request):
     """New scan configuration page."""
     from plugins import registry
     modules = registry.info_all()
-    return templates.TemplateResponse("scan_new.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "scan_new.html", context={
         "modules": modules,
     })
 
@@ -53,9 +51,7 @@ def scan_results(request: Request, scan_id: int, db: Session = Depends(get_db)):
     """Scan results page with findings, stats, and export."""
     scan = db.query(Scan).filter(Scan.id == scan_id).first()
     if not scan:
-        return templates.TemplateResponse("404.html", {
-            "request": request,
-        }, status_code=404)
+        return templates.TemplateResponse(request, "404.html", status_code=404)
 
     results = db.query(ScanResult).filter(ScanResult.scan_id == scan_id).all()
 
@@ -77,8 +73,7 @@ def scan_results(request: Request, scan_id: int, db: Session = Depends(get_db)):
     module_stats = dict(sorted(module_stats.items(), key=lambda x: x[1], reverse=True))
     max_module_count = max(module_stats.values()) if module_stats else 1
 
-    return templates.TemplateResponse("scan_results.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "scan_results.html", context={
         "scan": scan.to_dict(),
         "results": grouped,
         "total_results": len(results),
@@ -93,9 +88,7 @@ def scan_report(request: Request, scan_id: int, db: Session = Depends(get_db)):
     """Printable PDF report page — standalone, print-optimized layout."""
     scan = db.query(Scan).filter(Scan.id == scan_id).first()
     if not scan:
-        return templates.TemplateResponse("404.html", {
-            "request": request,
-        }, status_code=404)
+        return templates.TemplateResponse(request, "404.html", status_code=404)
 
     results = db.query(ScanResult).filter(ScanResult.scan_id == scan_id).all()
 
@@ -112,8 +105,7 @@ def scan_report(request: Request, scan_id: int, db: Session = Depends(get_db)):
     module_stats = dict(sorted(module_stats.items(), key=lambda x: x[1], reverse=True))
     max_module_count = max(module_stats.values()) if module_stats else 1
 
-    return templates.TemplateResponse("report.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "report.html", context={
         "scan": scan.to_dict(),
         "results": grouped,
         "total_results": len(results),
@@ -127,8 +119,7 @@ def modules_page(request: Request):
     """Browse and configure modules page."""
     from plugins import registry
     modules = registry.info_all()
-    return templates.TemplateResponse("modules.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "modules.html", context={
         "modules": modules,
     })
 
@@ -143,8 +134,7 @@ def settings_page(request: Request, db: Session = Depends(get_db)):
     config_map = {c.module_name: c.to_dict() for c in configs}
     modules = registry.info_all()
 
-    return templates.TemplateResponse("settings.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "settings.html", context={
         "modules": modules,
         "config_map": config_map,
     })
