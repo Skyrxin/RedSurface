@@ -1,0 +1,170 @@
+{% extends "base.html" %}
+{% block title %}People Lookup{% endblock %}
+{% block breadcrumb %}<a href="/">Dashboard</a> / People Lookup{% endblock %}
+
+{% block content %}
+<div class="scan-config">
+    <h1>People Lookup (OSINT)</h1>
+    <p class="form-hint" style="margin-bottom: 2rem;">Search for individuals, email addresses, or usernames across breaches, social media, and open-source intelligence databases.</p>
+
+    <form id="scan-form" onsubmit="return startScan(event)">
+        <!-- Target & Name -->
+        <div class="form-section">
+            <h3>Investigation Target</h3>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="scan-name">Investigation Name</label>
+                    <input type="text" id="scan-name" name="name" placeholder="e.g. Target Alpha - johndoe" required>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="scan-target-type">Target Indicator Type</label>
+                    <select id="scan-target-type" name="target_type" onchange="filterModules()">
+                        <option value="email">Email Address</option>
+                        <option value="username">Username / Handle</option>
+                        <option value="person">Full Name</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="scan-target">Target Value</label>
+                    <input type="text" id="scan-target" name="target" placeholder="e.g. jdoe@example.com" required>
+                </div>
+            </div>
+            <div class="form-row" id="deep-scan-row" style="display: none;">
+                <div class="form-group" style="display: flex; align-items: center; gap: 12px; padding: 12px; background: rgba(59, 130, 246, 0.05); border: 1px dashed rgba(59, 130, 246, 0.2); border-radius: 8px;">
+                    <input type="checkbox" id="deep-scan" name="deep_scan" style="width: 20px; height: 20px; cursor: pointer; accent-color: var(--blue);">
+                    <label for="deep-scan" style="margin-bottom: 0; cursor: pointer; flex: 1;">
+                        <strong style="color: var(--blue); font-size: 0.9rem;">Deep Discovery Mode</strong>
+                        <span style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-top: 2px;">
+                            Enables multi-engine fallback (Bing + DDG) and automated username pivoting. Recommended for hard-to-find targets.
+                        </span>
+                    </label>
+                </div>
+            </div>
+        </div>
+
+        <!-- Module Selection -->
+        <div class="form-section">
+            <h3>OSINT Modules</h3>
+            <p class="form-hint">Available modules update automatically based on the selected Target Indicator Type.</p>
+
+            {% for category in ['Discovery', 'OSINT', 'Threat Intelligence', 'Internal'] %}
+            <div class="module-category">
+                <h4>{{ category }}</h4>
+                <div class="module-grid">
+                    {% for mod in modules if mod.category == category %}
+                    <label class="module-card js-module-card" data-types="{{ mod.target_types | join(' ') }}" for="mod-{{ mod.name | replace(' ', '-') }}">
+                        <input type="checkbox" name="modules" value="{{ mod.name }}"
+                            id="mod-{{ mod.name | replace(' ', '-') }}" {% if not mod.is_ready and mod.requires_api_key
+                            %}disabled{% endif %}>
+                        <div class="module-info">
+                            <span class="module-name">{{ mod.name }}</span>
+                            <span class="module-type-badge type-{{ mod.api_type | lower | replace(' ', '-') }}">{{
+                                mod.api_type }}</span>
+                            {% if not mod.is_ready and mod.requires_api_key %}
+                            <span class="module-warning">⚠ API key required</span>
+                            {% endif %}
+                        </div>
+                    </label>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endfor %}
+            
+            <div id="no-modules-msg" style="display: none; padding: 2rem; text-align: center; color: var(--text-muted); background: rgba(255,255,255,0.02); border-radius: 6px;">
+                No modules are currently available for this target type. Enable APIs in Settings or add new plugins.
+            </div>
+        </div>
+
+        <div class="form-actions">
+            <button type="submit" class="btn-primary" id="start-btn">
+                <span class="btn-icon">▶</span> Start Investigation
+            </button>
+        </div>
+    </form>
+</div>
+
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+    function filterModules() {
+        const selectedType = document.getElementById('scan-target-type').value;
+        const cards = document.querySelectorAll('.js-module-card');
+        let visibleCount = 0;
+
+        cards.forEach(card => {
+            const types = card.getAttribute('data-types').split(' ');
+            if (types.includes(selectedType)) {
+                card.style.display = 'flex';
+                visibleCount++;
+            } else {
+                card.style.display = 'none';
+                // Uncheck if hidden
+                const checkbox = card.querySelector('input[type="checkbox"]');
+                if (checkbox) checkbox.checked = false;
+            }
+        });
+
+        // Hide empty categories visually
+        document.querySelectorAll('.module-category').forEach(cat => {
+            const visibleCards = cat.querySelectorAll('.js-module-card[style="display: flex;"]');
+            cat.style.display = visibleCards.length > 0 ? 'block' : 'none';
+        });
+
+        document.getElementById('no-modules-msg').style.display = visibleCount === 0 ? 'block' : 'none';
+        
+        // Update placeholder
+        const targetInput = document.getElementById('scan-target');
+        const deepScanRow = document.getElementById('deep-scan-row');
+
+        if (selectedType === 'email') targetInput.placeholder = 'e.g. victim@example.com';
+        else if (selectedType === 'username') targetInput.placeholder = 'e.g. sysadmin2023';
+        else if (selectedType === 'person') targetInput.placeholder = 'e.g. John Doe';
+
+        // Only show deep scan for person lookups initially
+        deepScanRow.style.display = (selectedType === 'person') ? 'block' : 'none';
+    }
+
+    // Run on load to set initial state
+    document.addEventListener('DOMContentLoaded', filterModules);
+
+    async function startScan(event) {
+        event.preventDefault();
+        const form = document.getElementById('scan-form');
+        const btn = document.getElementById('start-btn');
+        btn.disabled = true;
+        btn.textContent = 'Starting...';
+
+        const checked = [...form.querySelectorAll('input[name="modules"]:checked')];
+        const modules = checked.map(el => el.value);
+
+        const body = {
+            name: form.querySelector('#scan-name').value,
+            target: form.querySelector('#scan-target').value,
+            target_type: form.querySelector('#scan-target-type').value,
+            mode: 'passive',
+            modules: modules,
+            config: {
+                deep_scan: form.querySelector('#deep-scan').checked
+            }
+        };
+
+        try {
+            const res = await fetch('/api/scans', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+            const data = await res.json();
+            window.location.href = '/scan/' + data.id;
+        } catch (err) {
+            alert('Failed to start scan: ' + err.message);
+            btn.disabled = false;
+            btn.textContent = '▶ Start Investigation';
+        }
+        return false;
+    }
+</script>
+{% endblock %}

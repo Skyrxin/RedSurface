@@ -15,7 +15,14 @@ import dns.zone
 import dns.resolver
 import dns.rdatatype
 import dns.exception
+import dns.asyncresolver
 import httpx
+
+try:
+    import aiosmtplib
+    SMTP_AVAILABLE = True
+except ImportError:
+    SMTP_AVAILABLE = False
 
 from utils.logger import get_logger
 
@@ -358,6 +365,109 @@ class ActiveRecon:
         
         self.logger.info(f"Directory enumeration complete: {len(found_dirs)} interesting paths found")
         return found_dirs
+    
+    async def validate_email_smtp(self, email: str) -> Dict[str, Any]:
+        """
+        Validate an email address via SMTP handshake.
+        Connects to the domain's MX record and performs HELO/MAIL FROM/RCPT TO.
+        
+        Args:
+            email: Email address to validate
+            
+        Returns:
+            Dict with 'is_valid', 'is_catchall', and 'reason'
+        """
+        if not SMTP_AVAILABLE:
+            self.logger.warning("aiosmtplib not installed, skipping SMTP validation")
+            return {"is_valid": False, "is_catchall": False, "reason": "aiosmtplib not installed"}
+            
+        if "@" not in email:
+            return {"is_valid": False, "is_catchall": False, "reason": "Invalid email format"}
+            
+        domain = email.split("@")[1]
+        
+        try:
+            # Resolve MX records
+            mx_records = await dns.asyncresolver.resolve(domain, "MX")
+            mx_hosts = sorted([(r.preference, str(r.exchange).rstrip('.')) for r in mx_records])
+        except Exception as e:
+            self.logger.debug(f"SMTP Validator: Could not resolve MX for {domain}: {e}")
+            return {"is_valid": False, "is_catchall": False, "reason": f"No MX records: {str(e)}"}
+            
+        if not mx_hosts:
+            return {"is_valid": False, "is_catchall": False, "reason": "No MX records found"}
+            
+        # We will test the first MX host
+        mx_host = mx_hosts[0][1]
+        self.logger.debug(f"SMTP Validator: Testing {email} against MX {mx_host}")
+        
+        sender_email = "admin@example.com"
+        random_fake_email = f"faketest892347@{domain}"
+        
+        try:
+            # Connect to SMTP server
+            client = aiosmtplib.SMTP(hostname=mx_host, port=25, timeout=self.timeout)
+            await client.connect()
+            
+            # Step 1: Check for Catch-All (using a fake email)
+            # If server accepts a fake email, it's a catch-all server
+            catchall_status = False
+            try:
+                code, msg = await client.ehlo()
+                if not (200 <= code <= 299):
+                    await client.helo()
+                
+                await client.mail(sender_email)
+                code, msg = await client.rcpt(random_fake_email)
+                
+                # If 250 (OK), the server accepts ANY email (catch-all)
+                if code == 250:
+                    catchall_status = True
+            except aiosmtplib.SMTPException as e:
+                pass
+                
+            # Step 2: Test the actual email
+            is_valid = False
+            reason = "Unknown"
+            
+            try:
+                # Need to re-initiate or just send RSET
+                await client.rset()
+                await client.mail(sender_email)
+                code, msg = await client.rcpt(email)
+                
+                if code == 250:
+                    is_valid = True
+                    reason = "SMTP 250 OK"
+                else:
+                    is_valid = False
+                    reason = f"SMTP {code}: {msg}"
+            except aiosmtplib.SMTPResponseException as e:
+                is_valid = False
+                reason = f"SMTP Error {e.code}: {e.message}"
+            except aiosmtplib.SMTPException as e:
+                is_valid = False
+                reason = f"SMTP Connection Error: {str(e)}"
+                
+            # Clean up
+            try:
+                await client.quit()
+            except Exception:
+                pass
+                
+            # If it's a catch-all, we can't truly validate the specific email via SMTP
+            if catchall_status and is_valid:
+                reason = "Domain is Catch-All (Valid response, but unreliable)"
+                
+            return {
+                "is_valid": is_valid,
+                "is_catchall": catchall_status,
+                "reason": reason
+            }
+            
+        except Exception as e:
+            self.logger.debug(f"SMTP Validator Error on {mx_host}: {e}")
+            return {"is_valid": False, "is_catchall": False, "reason": f"Connection error: {str(e)}"}
     
     async def run(self, target) -> ActiveReconResults:
         """

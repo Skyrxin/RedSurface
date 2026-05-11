@@ -476,7 +476,7 @@
             <span class="cover-brand-version">v2.0</span>
         </div>
 
-        <h1 class="cover-title">Attack Surface<br>Intelligence Report</h1>
+        <h1 class="cover-title">{% if scan.target_type in ['domain', 'ip'] %}Attack Surface{% else %}Identity OSINT{% endif %}<br>Intelligence Report</h1>
         <p class="cover-subtitle">External reconnaissance findings for <strong>{{ scan.target }}</strong></p>
 
         <div class="cover-meta">

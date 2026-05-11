@@ -23,6 +23,7 @@ class PluginCategory(str, Enum):
 class ApiType(str, Enum):
     FREE = "Free API"
     TIERED = "Tiered API"
+    PAID = "Paid API"
     COMMERCIAL = "Commercial API"
     INTERNAL = "Internal"
     TOOL = "Tool"
@@ -55,6 +56,7 @@ class PluginBase(ABC):
     requires_api_key: bool = False
     api_key_names: List[str] = []
     result_types: List[str] = []  # What types of results this plugin produces
+    target_types: List[str] = ["domain"]  # What target types are supported
     website: str = ""
 
     def __init__(self):
@@ -101,6 +103,7 @@ class PluginBase(ABC):
             "requires_api_key": self.requires_api_key,
             "api_key_names": self.api_key_names,
             "result_types": self.result_types,
+            "target_types": self.target_types,
             "website": self.website,
             "is_ready": self.is_ready(),
             "enabled": self.enabled,

@@ -19,6 +19,7 @@ class ScanCreate(BaseModel):
     """Request body for creating a new scan."""
     name: str
     target: str
+    target_type: str = "domain"  # domain | email | username | person
     mode: str = "passive"  # passive | active
     modules: list[str] = []  # Empty = all enabled modules
 
@@ -29,6 +30,7 @@ class ScanResponse(BaseModel):
     id: int
     name: str
     target: str
+    target_type: str
     status: str
     mode: str
     created_at: Optional[str] = None
@@ -45,6 +47,7 @@ async def create_scan(scan_in: ScanCreate, db: Session = Depends(get_db)):
     scan = Scan(
         name=scan_in.name,
         target=scan_in.target,
+        target_type=scan_in.target_type,
         mode=scan_in.mode,
         config={"modules": scan_in.modules},
     )

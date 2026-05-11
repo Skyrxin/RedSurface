@@ -84,12 +84,63 @@
     <!-- Attack Surface Graph -->
     {% if scan.status == 'completed' and total_results > 0 %}
     <div class="graph-section">
-        <h3>⬡ Attack Surface Graph <span class="count">({{ total_results }} nodes)</span></h3>
+        <h3>⬡ {% if scan.target_type == 'domain' or scan.target_type == 'ip' %}Attack Surface Graph{% else %}Identity Graph{% endif %} <span class="count">({{ total_results + 1 }} nodes)</span></h3>
         <div class="graph-container" id="attack-graph"></div>
     </div>
     {% endif %}
 
     <!-- Search + Filter Bar -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
+    <link rel="stylesheet" href="/static/css/main.css">
+    <!-- Suggested Pivots (Usernames discovered from profiles) -->
+    {% set all_pivots = [] %}
+    {% for rtype, items in results.items() %}
+        {% for item in items %}
+            {% set meta = item.metadata if item.metadata else {} %}
+            {% if meta.suggested_pivots %}
+                {% for pivot in meta.suggested_pivots %}
+                    {% if pivot not in all_pivots %}
+                        {% set _ = all_pivots.append(pivot) %}
+                    {% endif %}
+                {% endfor %}
+            {% endif %}
+        {% endfor %}
+    {% endfor %}
+
+    {% if all_pivots %}
+    <div class="pivots-section" style="margin-bottom: 32px; padding: 24px; background: rgba(59, 130, 246, 0.03); border: 1px solid rgba(59, 130, 246, 0.1); border-radius: var(--radius);">
+        <h3 style="font-size: 1rem; margin-bottom: 20px; color: var(--text-primary); display: flex; align-items: center; gap: 10px;">
+            <i class="fas fa-fingerprint" style="color: var(--blue);"></i> Discovered Aliases & Suggested Pivots
+        </h3>
+        <div class="identity-grid" style="margin-bottom: 0;">
+            {% for pivot in all_pivots %}
+            <div class="profile-card" style="padding: 16px; flex-direction: row; align-items: center; justify-content: space-between; border-color: rgba(59, 130, 246, 0.2);">
+                <div style="display: flex; align-items: center; gap: 14px;">
+                    <div class="profile-platform-icon" style="width: 42px; height: 42px; font-size: 1.3rem; background: var(--blue-glow); color: var(--blue); border-color: rgba(59, 130, 246, 0.3);">
+                        <i class="fas fa-at"></i>
+                    </div>
+                    <div>
+                        <span style="display: block; font-weight: 700; font-size: 1.1rem; color: var(--text-primary);">{{ pivot }}</span>
+                        <span style="display: block; font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; font-weight: 600;">Candidate Alias</span>
+                    </div>
+                </div>
+                <div style="display: flex; gap: 8px;">
+                    <button class="btn-sm" onclick="copyDork('pivot-{{ loop.index0 }}')" style="border-color: var(--border);">
+                        <span id="pivot-{{ loop.index0 }}" style="display:none;">{{ pivot }}</span>
+                        <i class="fas fa-copy"></i>
+                    </button>
+                    <a href="/scan/people?target_type=username&target={{ pivot }}&name=Pivot: {{ pivot }}" class="profile-link" style="padding: 6px 12px; font-size: 0.75rem; background: var(--blue-glow); color: var(--blue); border-color: rgba(59, 130, 246, 0.3);">
+                        <i class="fas fa-search"></i> Pivot Scan
+                    </a>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
     <div class="results-toolbar">
         <input type="text" id="result-search" placeholder="Search results…" oninput="filterResults()">
         <div class="results-tabs" id="result-tabs">
@@ -102,36 +153,119 @@
         </div>
     </div>
 
-    <!-- Results Tables -->
+    <!-- Results Container -->
     <div class="results-container" id="results-all">
         {% for rtype, items in results.items() %}
         <div class="result-section" data-type="{{ rtype }}">
             <h3>{{ rtype | replace('_', ' ') | title }} <span class="count">({{ items | length }})</span></h3>
-            <table class="results-table">
-                <thead>
-                    <tr>
-                        <th>Value</th>
-                        <th>Source</th>
-                        <th>Time</th>
-                    </tr>
-                </thead>
-                <tbody>
+            
+            {% if rtype == 'social_profile' %}
+                <!-- Rich Card Grid for Profiles -->
+                <div class="identity-grid">
                     {% for item in items %}
-                    <tr class="result-row" data-value="{{ item.value | lower }}">
-                        <td class="mono result-value">{{ item.value }}</td>
-                        <td><span class="module-tag">{{ item.module_name }}</span></td>
-                        <td class="result-time">{{ item.created_at[:16] if item.created_at else "—" }}</td>
-                    </tr>
+                        {% set meta = item.metadata if item.metadata else {} %}
+                        {% if meta.get('profiles') %}
+                            {% for p in meta['profiles'] %}
+                            <div class="profile-card">
+                                <div class="profile-header">
+                                    <div class="profile-platform-icon">
+                                        {% if p.platform == 'LinkedIn' %}<i class="fab fa-linkedin" style="color: #0077b5;"></i>
+                                        {% elif p.platform == 'Twitter' %}<i class="fab fa-twitter" style="color: #1da1f2;"></i>
+                                        {% elif p.platform == 'GitHub' %}<i class="fab fa-github" style="color: #f1f5f9;"></i>
+                                        {% elif p.platform == 'Facebook' %}<i class="fab fa-facebook" style="color: #1877f2;"></i>
+                                        {% elif p.platform == 'Instagram' %}<i class="fab fa-instagram" style="color: #e4405f;"></i>
+                                        {% else %}<i class="fas fa-user-circle"></i>{% endif %}
+                                    </div>
+                                    <div class="profile-info">
+                                        <span class="profile-title" title="{{ p.title }}">{{ p.title }}</span>
+                                        <span class="profile-platform-name">{{ p.platform }}</span>
+                                    </div>
+                                </div>
+                                <div class="profile-snippet">
+                                    {{ p.snippet or "No profile description available." }}
+                                </div>
+                                <div class="profile-footer">
+                                    <div class="match-quality-box">
+                                        <span class="match-label">Match Quality</span>
+                                        <span class="match-quality-badge {% if p.match_quality >= 80 %}match-high{% elif p.match_quality >= 50 %}match-medium{% else %}match-low{% endif %}">
+                                            {{ p.match_quality }}% Match
+                                        </span>
+                                    </div>
+                                    <a href="{{ p.url }}" target="_blank" class="profile-link">View Profile</a>
+                                </div>
+                            </div>
+                            {% endfor %}
+                        {% else %}
+                            <div class="profile-card">
+                                <div class="profile-header">
+                                    <div class="profile-platform-icon"><i class="fas fa-link"></i></div>
+                                    <div class="profile-info">
+                                        <span class="profile-title">{{ item.value }}</span>
+                                        <span class="profile-platform-name">{{ item.module_name }} Result</span>
+                                    </div>
+                                </div>
+                                <div class="profile-footer">
+                                    <a href="{{ item.value }}" target="_blank" class="profile-link">Open URL</a>
+                                </div>
+                            </div>
+                        {% endif %}
                     {% endfor %}
-                </tbody>
-            </table>
+                </div>
+            {% else %}
+                <!-- Traditional Table for other types -->
+                <table class="results-table">
+                    <thead>
+                        <tr>
+                            <th>Value</th>
+                            <th>Source</th>
+                            <th>Time</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for item in items %}
+                        <tr class="result-row" data-value="{{ item.value | lower }}">
+                            <td class="mono result-value">{{ item.value }}</td>
+                            <td><span class="module-tag">{{ item.module_name }}</span></td>
+                            <td class="result-time">{{ item.created_at[:16] if item.created_at else "—" }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            {% endif %}
         </div>
         {% endfor %}
 
+        <!-- Raw Dorks Toggle Section (Only if person scan) -->
+        {% if scan.target_type == 'person' %}
+            <div class="raw-dorks-section">
+                <div class="toggle-header" onclick="toggleDorks()">
+                    <div class="toggle-title">
+                        <i class="fas fa-search-plus"></i>
+                        <span>Advanced Pivot Search Queries (Raw Dorks)</span>
+                        <span class="toggle-badge">View Original Crawl Queries</span>
+                    </div>
+                    <i class="fas fa-chevron-down toggle-icon" id="dork-chevron"></i>
+                </div>
+                <div class="toggle-content" id="dork-content">
+                    {% for item in results.get('social_profile', []) %}
+                        {% set meta = item.metadata if item.metadata else {} %}
+                        {% if meta.get('raw_dorks') %}
+                            {% for dork in meta['raw_dorks'] %}
+                                <div class="raw-dork-card">
+                                    <i class="fas fa-terminal dork-icon"></i>
+                                    <span class="dork-url" id="dork-{{ loop.index0 }}">{{ dork }}</span>
+                                    <button class="btn-sm" onclick="copyDork('dork-{{ loop.index0 }}')">Copy</button>
+                                </div>
+                            {% endfor %}
+                        {% endif %}
+                    {% endfor %}
+                </div>
+            </div>
+        {% endif %}
+
         {% if not results %}
         <div class="empty-state">
-            <p>No results yet. {% if scan.status == 'running' %}Scan is still running…{% else %}This scan produced no
-                findings.{% endif %}</p>
+            <p>No results yet. {% if scan.status == 'running' %}Scan is still running…{% else %}This scan produced no findings.{% endif %}</p>
         </div>
         {% endif %}
     </div>
@@ -202,5 +336,24 @@
         initAttackGraph('attack-graph', {{ scan.id }});
     });
     {% endif %}
+
+    function toggleDorks() {
+        const content = document.getElementById('dork-content');
+        const icon = document.getElementById('dork-chevron');
+        if (content.classList.contains('active')) {
+            content.classList.remove('active');
+            icon.style.transform = 'rotate(0deg)';
+        } else {
+            content.classList.add('active');
+            icon.style.transform = 'rotate(180deg)';
+        }
+    }
+
+    function copyDork(id) {
+        const text = document.getElementById(id).innerText;
+        navigator.clipboard.writeText(text).then(() => {
+            alert('Query copied to clipboard!');
+        });
+    }
 </script>
 {% endblock %}

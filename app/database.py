@@ -40,6 +40,7 @@ class Scan(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(255), nullable=False)
     target = Column(String(255), nullable=False)
+    target_type = Column(String(50), default="domain", nullable=False)
     status = Column(String(20), default=ScanStatus.PENDING.value, nullable=False)
     mode = Column(String(20), default="passive")  # passive / active
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
@@ -59,6 +60,7 @@ class Scan(Base):
             "id": self.id,
             "name": self.name,
             "target": self.target,
+            "target_type": self.target_type,
             "status": self.status,
             "mode": self.mode,
             "created_at": self.created_at.isoformat() if self.created_at else None,

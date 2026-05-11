@@ -53,8 +53,23 @@ def new_scan(request: Request, db: Session = Depends(get_db)):
     """New scan configuration page."""
     from plugins import registry
     _hydrate_plugin_keys(db)
-    modules = registry.info_all()
+    # Only domain modules for standard scan
+    modules = [m for m in registry.info_all() if "domain" in m.get("target_types", []) or "ip" in m.get("target_types", [])]
     return templates.TemplateResponse(request, "scan_new.html", context={
+        "modules": modules,
+    })
+
+
+@router.get("/scan/people")
+def new_people_scan(request: Request, db: Session = Depends(get_db)):
+    """People Lookup OSINT configuration page."""
+    from plugins import registry
+    _hydrate_plugin_keys(db)
+    # Only people-focused modules
+    people_types = ["email", "username", "person"]
+    modules = [m for m in registry.info_all() if any(t in people_types for t in m.get("target_types", []))]
+    print(f"[DEBUG] /scan/people modules found: {[m['name'] for m in modules]}")
+    return templates.TemplateResponse(request, "scan_people.html", context={
         "modules": modules,
     })
 

@@ -16,6 +16,7 @@ class HIBPPlugin(PluginBase):
     requires_api_key = True
     api_key_names = ["HIBP_KEY"]
     result_types = ["breach"]
+    target_types = ["domain", "email"]
     website = "https://haveibeenpwned.com/"
 
     async def run(self, target: str, config: dict = None) -> PluginResult:
@@ -24,10 +25,19 @@ class HIBPPlugin(PluginBase):
             from modules.osint import OSINTCollector
 
             collector = OSINTCollector()
-            breached = await collector.search_hibp(
-                domain=target,
-                api_key=self.api_keys.get("HIBP_KEY"),
-            )
+            
+            target_type = config.get("target_type", "domain") if config else "domain"
+            
+            if target_type == "email":
+                breached = await collector.search_hibp_email(
+                    email=target,
+                    api_key=self.api_keys.get("HIBP_KEY"),
+                )
+            else:
+                breached = await collector.search_hibp(
+                    domain=target,
+                    api_key=self.api_keys.get("HIBP_KEY"),
+                )
 
             result.values = sorted(set(breached))
             result.metadata = {

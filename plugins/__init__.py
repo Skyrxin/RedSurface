@@ -1,4 +1,3 @@
-"""
 Plugin Registry — Discovers and manages all available plugins.
 """
 from __future__ import annotations

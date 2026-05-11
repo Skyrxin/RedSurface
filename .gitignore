@@ -46,3 +46,7 @@ Thumbs.db
 # Secrets
 .env
 *.key
+
+# Development and non-essential files
+project_dev/
+

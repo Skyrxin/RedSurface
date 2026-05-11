@@ -51,13 +51,14 @@ class ScanEngine:
             target = scan.target
             scan_config = scan.config or {}
             scan_config["scan_id"] = scan_id  # Pass scan_id for plugins that need context
+            scan_config["target_type"] = scan.target_type  # Inject target type for dynamic plugins
             enabled_modules = scan_config.get("modules", [])
 
-            # Get all plugins (or only selected ones)
+            # Get all plugins (or only selected ones) that support this target type
             if enabled_modules:
-                plugins = [p for p in registry.all() if p.name in enabled_modules]
+                plugins = [p for p in registry.all() if p.name in enabled_modules and scan.target_type in p.target_types]
             else:
-                plugins = registry.enabled()
+                plugins = [p for p in registry.enabled() if scan.target_type in p.target_types]
 
             logger.info(f"Scan {scan_id}: {len(plugins)} plugins loaded")
 

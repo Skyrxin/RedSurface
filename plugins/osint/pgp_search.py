@@ -11,6 +11,7 @@ class PGPSearchPlugin(PluginBase):
     api_type = ApiType.FREE
     requires_api_key = False
     result_types = ["email", "person"]
+    target_types = ["domain", "email", "person"]
 
     async def run(self, target: str, config: dict = None) -> PluginResult:
         result = PluginResult(plugin_name=self.name, result_type="email")
