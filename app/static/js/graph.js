@@ -26,6 +26,7 @@ class AttackSurfaceGraph {
             abuse_report: '#fb923c',
             hostname: '#0ea5e9',
             error: '#6b7280',
+            aggregate: '#94a3b8',
         };
 
         this.sizes = {
@@ -41,6 +42,7 @@ class AttackSurfaceGraph {
             directory: 6,
             abuse_report: 7,
             error: 4,
+            aggregate: 12,
         };
 
         this.init();
@@ -106,7 +108,7 @@ class AttackSurfaceGraph {
             const type = result.result_type || 'unknown';
             const value = result.value || '';
             const module = result.module_name || '';
-            const nodeId = `${type}:${value}`;
+            const nodeId = result.id || `${type}:${value}`;
 
             if (nodeMap.has(nodeId)) continue;
             nodeMap.set(nodeId, true);
@@ -118,6 +120,7 @@ class AttackSurfaceGraph {
                 type: type,
                 group: type,
                 module: module,
+                metadata: result.metadata || {}
             });
 
             // Link to parent or central domain
@@ -165,10 +168,12 @@ class AttackSurfaceGraph {
         const simulation = d3.forceSimulation(this.nodes)
             .force('link', d3.forceLink(this.links).id(d => d.id).distance(d => {
                 if (d.type === 'subdomain') return 80;
+                if (d.type === 'aggregate') return 150;
                 return 120;
             }))
             .force('charge', d3.forceManyBody().strength(d => {
                 if (d.type === 'domain') return -400;
+                if (d.type === 'aggregate') return -200;
                 return -60;
             }))
             .force('center', d3.forceCenter(this.width / 2, this.height / 2))
@@ -193,21 +198,25 @@ class AttackSurfaceGraph {
             .join('circle')
             .attr('r', d => this.sizes[d.type] || 6)
             .attr('fill', d => this.colors[d.type] || '#6b7280')
-            .attr('stroke', d => d.type === 'domain' ? '#fff' : 'none')
-            .attr('stroke-width', d => d.type === 'domain' ? 2 : 0)
+            .attr('stroke', d => {
+                if (d.type === 'domain') return '#fff';
+                if (d.type === 'aggregate') return 'rgba(255, 255, 255, 0.5)';
+                return 'none';
+            })
+            .attr('stroke-width', d => d.type === 'domain' ? 2 : (d.type === 'aggregate' ? 1 : 0))
             .attr('cursor', 'pointer')
             .style('filter', d => d.type === 'domain' ? 'url(#glow)' : 'none')
             .call(this.drag(simulation));
 
-        // Labels (only for domain + large nodes)
+        // Labels (domain + aggregates)
         const label = this.g.append('g')
             .selectAll('text')
-            .data(this.nodes.filter(d => d.type === 'domain'))
+            .data(this.nodes.filter(d => d.type === 'domain' || d.type === 'aggregate'))
             .join('text')
             .attr('text-anchor', 'middle')
             .attr('dy', d => -(this.sizes[d.type] || 6) - 6)
             .attr('fill', '#f1f5f9')
-            .attr('font-size', '11px')
+            .attr('font-size', d => d.type === 'domain' ? '11px' : '9px')
             .attr('font-weight', '600')
             .attr('font-family', 'Inter, sans-serif')
             .text(d => d.label);
@@ -219,13 +228,20 @@ class AttackSurfaceGraph {
             .style('display', 'none');
 
         node.on('mouseover', (event, d) => {
+            let tooltipContent = `
+                <div class="tooltip-type">${d.type}</div>
+                <div class="tooltip-value">${d.fullLabel || d.label}</div>
+            `;
+            
+            if (d.type === 'aggregate' && d.metadata) {
+                tooltipContent += `<div class="tooltip-module">Contains ${d.metadata.count} ${d.metadata.original_type}s</div>`;
+            } else if (d.module) {
+                tooltipContent += `<div class="tooltip-module">via ${d.module}</div>`;
+            }
+
             tooltip
                 .style('display', 'block')
-                .html(`
-                    <div class="tooltip-type">${d.type}</div>
-                    <div class="tooltip-value">${d.fullLabel || d.label}</div>
-                    ${d.module ? `<div class="tooltip-module">via ${d.module}</div>` : ''}
-                `)
+                .html(tooltipContent)
                 .style('left', (event.offsetX + 15) + 'px')
                 .style('top', (event.offsetY - 10) + 'px');
 

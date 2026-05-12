@@ -24,11 +24,15 @@ async def run_native_scan(target, target_type="person", mode="passive"):
     print(f"[*] Starting Native RedSurface Scan for: {target} ({target_type})")
     
     # Initialize Database and Plugins
-    await init_db()
+    await db_module.init_db()
     registry.discover_plugins()
     print(f"[*] Loaded {len(registry.all())} plugins")
     
-    async with AsyncSessionLocal() as db:
+    if db_module.AsyncSessionLocal is None:
+         print("[!] Failed to initialize AsyncSessionLocal")
+         return None
+
+    async with db_module.AsyncSessionLocal() as db:
         try:
             # Create Scan Record
             new_scan = Scan(

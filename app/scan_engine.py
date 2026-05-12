@@ -8,11 +8,12 @@ import traceback
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
-from sqlalchemy import select
+from sqlalchemy import select, insert
 from app import database as db_module
-from app.database import Scan, ScanResult, ScanStatus, ModuleConfig, AsyncSessionLocal
+from app.database import Scan, ScanResult, ScanStatus, ModuleConfig
 from plugins import registry
 from plugins.base import PluginBase, PluginResult, PluginCategory
+from app.api.ws import manager
 
 logger = logging.getLogger("redsurface")
 
@@ -20,8 +21,9 @@ logger = logging.getLogger("redsurface")
 class ScanEngine:
     """Orchestrates scans using the plugin system."""
 
-    def __init__(self):
+    def __init__(self, max_concurrent_plugins: int = 10):
         self._running_tasks: Dict[int, asyncio.Task] = {}
+        self._semaphore = asyncio.Semaphore(max_concurrent_plugins)
 
     async def _get_session(self):
         """Get an async database session, initializing if needed."""
@@ -49,6 +51,13 @@ class ScanEngine:
             scan.started_at = datetime.now(timezone.utc)
             await db.commit()
             logger.info(f"Scan {scan_id} started for target: {scan.target}")
+            
+            # Broadcast scan started
+            await manager.broadcast_to_scan(scan_id, {
+                "event": "scan_started",
+                "status": scan.status,
+                "target": scan.target
+            })
 
             target = scan.target
             scan_config = scan.config or {}
@@ -95,6 +104,13 @@ class ScanEngine:
                 
                 logger.info(f"Scan {scan_id}: Starting Stage {stage_idx + 1} ({len(stage_plugins)} plugins)")
                 
+                # Broadcast stage started
+                await manager.broadcast_to_scan(scan_id, {
+                    "event": "stage_started",
+                    "stage": stage_idx + 1,
+                    "plugins": [p.name for p in stage_plugins]
+                })
+                
                 tasks = []
                 for plugin in stage_plugins:
                     tasks.append(self._run_plugin(plugin, target, scan_config))
@@ -102,15 +118,16 @@ class ScanEngine:
                 results = await asyncio.gather(*tasks, return_exceptions=True)
 
                 # Save results to DB after each stage so next stage can read them
+                bulk_results = []
                 for result in results:
                     if isinstance(result, Exception):
                         logger.error(f"Scan {scan_id}: plugin exception: {result}")
-                        db.add(ScanResult(
-                            scan_id=scan_id,
-                            module_name="error",
-                            result_type="error",
-                            value=str(result),
-                        ))
+                        bulk_results.append({
+                            "scan_id": scan_id,
+                            "module_name": "error",
+                            "result_type": "error",
+                            "value": str(result),
+                        })
                         continue
                     if isinstance(result, PluginResult):
                         total_values += len(result.values)
@@ -124,23 +141,31 @@ class ScanEngine:
                             if result.per_value_metadata and idx < len(result.per_value_metadata):
                                 metadata = result.per_value_metadata[idx]
                             
-                            db.add(ScanResult(
-                                scan_id=scan_id,
-                                module_name=result.plugin_name,
-                                result_type=result.result_type,
-                                value=value,
-                                parent_value=parent_value,
-                                metadata_json=metadata,
-                            ))
+                            bulk_results.append({
+                                "scan_id": scan_id,
+                                "module_name": result.plugin_name,
+                                "result_type": result.result_type,
+                                "value": value,
+                                "parent_value": parent_value,
+                                "metadata_json": metadata,
+                            })
                         if result.errors:
                             for err in result.errors:
                                 logger.warning(f"Scan {scan_id}: {result.plugin_name}: {err}")
-                                db.add(ScanResult(
-                                    scan_id=scan_id,
-                                    module_name=result.plugin_name,
-                                    result_type="error",
-                                    value=err,
-                                ))
+                                bulk_results.append({
+                                    "scan_id": scan_id,
+                                    "module_name": result.plugin_name,
+                                    "result_type": "error",
+                                    "value": err,
+                                })
+                
+                if bulk_results:
+                    await db.execute(insert(ScanResult).values(bulk_results))
+                    # Broadcast results found in this stage
+                    await manager.broadcast_to_scan(scan_id, {
+                        "event": "results_found",
+                        "results": bulk_results
+                    })
                 await db.commit() # Commit after each stage
 
             # Mark scan as completed
@@ -164,6 +189,14 @@ class ScanEngine:
                 f"Scan {scan_id} completed: {total_values} results "
                 f"in {scan.duration_seconds:.1f}s"
             )
+            
+            # Broadcast scan completed
+            await manager.broadcast_to_scan(scan_id, {
+                "event": "scan_completed",
+                "status": scan.status,
+                "duration": scan.duration_seconds,
+                "total_results": total_values
+            })
 
         except Exception as e:
             logger.error(f"Scan {scan_id} failed: {e}\n{traceback.format_exc()}")
@@ -176,6 +209,13 @@ class ScanEngine:
                     scan.error_message = traceback.format_exc()
                     scan.completed_at = datetime.now(timezone.utc)
                     await db.commit()
+                    
+                    # Broadcast scan failed
+                    await manager.broadcast_to_scan(scan_id, {
+                        "event": "scan_failed",
+                        "status": scan.status,
+                        "error": str(e)
+                    })
             except Exception:
                 pass
         finally:
@@ -184,34 +224,35 @@ class ScanEngine:
     async def _run_plugin(
         self, plugin: PluginBase, target: str, config: dict
     ) -> PluginResult:
-        """Run a single plugin with error handling."""
-        logger.info(f"Running plugin: {plugin.name}")
-        try:
-            result = await asyncio.wait_for(
-                plugin.run(target, config),
-                timeout=config.get("timeout", 120),
-            )
-            logger.info(
-                f"Plugin {plugin.name}: {len(result.values)} results"
-                + (f", errors: {result.errors}" if result.errors else "")
-            )
-            return result
-        except asyncio.TimeoutError:
-            logger.warning(f"Plugin {plugin.name} timed out")
-            return PluginResult(
-                plugin_name=plugin.name,
-                result_type="error",
-                success=False,
-                errors=[f"Plugin {plugin.name} timed out after {config.get('timeout', 120)}s"],
-            )
-        except Exception as e:
-            logger.error(f"Plugin {plugin.name} failed: {e}")
-            return PluginResult(
-                plugin_name=plugin.name,
-                result_type="error",
-                success=False,
-                errors=[f"Plugin {plugin.name} failed: {str(e)}"],
-            )
+        """Run a single plugin with error handling and concurrency limits."""
+        async with self._semaphore:
+            logger.info(f"Running plugin: {plugin.name}")
+            try:
+                result = await asyncio.wait_for(
+                    plugin.run(target, config),
+                    timeout=config.get("timeout", 120),
+                )
+                logger.info(
+                    f"Plugin {plugin.name}: {len(result.values)} results"
+                    + (f", errors: {result.errors}" if result.errors else "")
+                )
+                return result
+            except asyncio.TimeoutError:
+                logger.warning(f"Plugin {plugin.name} timed out")
+                return PluginResult(
+                    plugin_name=plugin.name,
+                    result_type="error",
+                    success=False,
+                    errors=[f"Plugin {plugin.name} timed out after {config.get('timeout', 120)}s"],
+                )
+            except Exception as e:
+                logger.error(f"Plugin {plugin.name} failed: {e}")
+                return PluginResult(
+                    plugin_name=plugin.name,
+                    result_type="error",
+                    success=False,
+                    errors=[f"Plugin {plugin.name} failed: {str(e)}"],
+                )
 
     def launch_scan(self, scan_id: int):
         """Fire-and-forget a scan as a background task."""
@@ -236,5 +277,5 @@ class ScanEngine:
         return False
 
 
-# Global engine singleton
-scan_engine = ScanEngine()
+# Global engine singleton (Default 10 concurrent plugins)
+scan_engine = ScanEngine(max_concurrent_plugins=10)

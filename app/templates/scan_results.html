@@ -346,7 +346,9 @@
     }
 
     {% if scan.status == 'running' %}
-    setTimeout(() => location.reload(), 5000);
+    document.addEventListener('DOMContentLoaded', function () {
+        initScanWebSocket({{ scan.id }});
+    });
     {% endif %}
 
     async function deleteScan(id) {

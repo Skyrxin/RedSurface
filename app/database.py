@@ -57,6 +57,7 @@ class Scan(Base):
     results = relationship("ScanResult", back_populates="scan", cascade="all, delete-orphan")
 
     def to_dict(self):
+        """Convert model to dictionary for API responses."""
         return {
             "id": self.id,
             "name": self.name,
@@ -70,7 +71,9 @@ class Scan(Base):
             "duration_seconds": self.duration_seconds,
             "error_message": self.error_message,
             "config": self.config,
-            "result_count": len(self.results) if self.results else 0,
+            # We omit result_count here because lazy-loading 'results' triggers synchronous IO
+            # and fails in our async event loop.
+            "result_count": 0,
         }
 
 

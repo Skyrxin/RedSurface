@@ -75,7 +75,7 @@ To add a new plugin:
     - **SerpApi:** `serpapi` can be used as a fallback or alternative for search engine results.
 
 ## System Protocols & AI Instructions
-*   **End-of-Session Update:** After successfully completing a coding task, fixing a bug, or adding a new plugin, you (Gemini) MUST generate a brief summary of the changes and ask me: *"Should I update the Current Tasks and Anti-Patterns in GEMINI.md?"*
+*   **Automatic Updates:** The `GEMINI.md` file MUST be updated automatically after every task, fix, or update to reflect the latest project state, tools, and protocols. No user confirmation is required for these updates.
 *   **Context Verification:** Before modifying any `async` orchestration in `ScanEngine` or adding new OSINT plugins, verify you understand the current rate-limiting and error-handling mechanisms to avoid breaking the asynchronous flow.
 *   **Code Style:** Write clean, modular Python. Always use type hinting. Ensure all new plugins strictly adhere to the `PluginBase` structure and return properly formatted `PluginResult` objects.
 
@@ -88,8 +88,9 @@ To add a new plugin:
 - [x] **Task:** Implement "Smart Full Name OSINT" via the `Web Profile Discovery` plugin.
 - [x] **Task:** Create reusable native scan test runner in `gemini_modules/`.
 - [x] **Task:** Implement Async Database Migration (Optimization Plan 1).
-- [ ] **Task:** Implement Bulk Database Inserts (Optimization Plan 2).
-- [ ] **Task:** Implement Concurrency Limits (Optimization Plan 3).
+- [x] **Task:** Implement Bulk Database Inserts (Optimization Plan 2).
+- [x] **Task:** Implement Concurrency Limits (Optimization Plan 3).
+- [x] **Task:** Implement Real-time Communication (Optimization Plan 4).
 - [ ] **Task:** Implement a formal test suite (moved from TODOs).
 - [ ] **Task:** Refine error handling for HTTP timeouts in async plugins.
 
@@ -100,6 +101,10 @@ To add a new plugin:
 - **Solution:** Use `sqlalchemy.ext.asyncio` patterns: `await db.execute(select(...))` and `result.scalars()` to interact with the database without blocking the event loop.
 - **Mistake:** Forgetting to await database transactions (`commit`, `refresh`, `close`) in an async context.
 - **Solution:** Ensure all session-level operations are awaited to prevent "greenlet" or "coroutine never awaited" errors.
+- **Mistake:** Iteratively calling `db.add()` for thousands of scan results.
+- **Solution:** Use SQLAlchemy's bulk insert capabilities (`db.execute(insert(Model).values(list_of_dicts))`) to drastically improve persistence performance.
+- **Mistake:** Launching dozens of network-heavy async tasks simultaneously.
+- **Solution:** Use an `asyncio.Semaphore(n)` to control concurrency, preventing local resource exhaustion and remote IP bans.
 - **Mistake:** Storing lists of enriched data in global `PluginResult.metadata`.
 - **Solution:** This causes the `ScanEngine` to replicate the entire list across every result row in the database, leading to massive UI duplication. Use `per_value_metadata` to align specific context with specific values.
 - **Mistake:** UI template only looking at global metadata keys (e.g., `'profiles'`) after backend transitioned to `per_value_metadata`.
