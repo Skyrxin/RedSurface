@@ -120,6 +120,8 @@ class OSINTCollector:
         timeout: float = 15.0,
         max_retries: int = 2,
         github_token: Optional[str] = None,
+        google_api_key: Optional[str] = None,
+        google_search_cx: Optional[str] = None,
         use_system_dns: bool = True,
     ) -> None:
         """
@@ -128,12 +130,16 @@ class OSINTCollector:
         Args:
             timeout: HTTP request timeout in seconds
             max_retries: Maximum retry attempts for failed requests
-            github_token: Optional GitHub personal access token for higher rate limits
+            github_token: Optional GitHub personal access token
+            google_api_key: Optional Google API key for Custom Search
+            google_search_cx: Optional Google Search Engine ID (CX)
             use_system_dns: Use system DNS instead of public DNS servers
         """
         self.timeout = timeout
         self.max_retries = max_retries
         self.github_token = github_token
+        self.google_api_key = google_api_key
+        self.google_search_cx = google_search_cx
         self.use_system_dns = use_system_dns
         self.logger = get_logger()
         self._recent_scans = {}  # Session-level cache for loop prevention
@@ -886,22 +892,124 @@ class OSINTCollector:
                     
         return sorted(profiles, key=lambda x: x['match_quality'], reverse=True)
 
+    async def search_google_custom_search(self, query_string: str, is_raw_query: bool = False) -> List[Dict[str, Any]]:
+        """
+        Search using Google Custom Search API.
+        If is_raw_query is True, query_string is used as-is. 
+        Otherwise, it is treated as a name/username and wrapped in social dorks.
+        """
+        if not self.google_api_key or not self.google_search_cx:
+            self.logger.debug("Google CSE: API key or CX missing, skipping")
+            return []
+
+        # Build query
+        if is_raw_query:
+            query = query_string
+        else:
+            query = f'"{query_string}" (site:linkedin.com/in OR site:twitter.com OR site:instagram.com OR site:facebook.com OR site:github.com)'
+
+        self.logger.info(f"Searching Google CSE with query: {query}")
+        results = []
+        
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            try:
+                url = "https://www.googleapis.com/customsearch/v1"
+                params = {
+                    "q": query,
+                    "key": self.google_api_key,
+                    "cx": self.google_search_cx,
+                    "num": 10
+                }
+                
+                resp = await client.get(url, params=params)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    for item in data.get("items", []):
+                        link = item.get("link", "")
+                        title = item.get("title", "")
+                        snippet = item.get("snippet", "")
+                        
+                        platform = "Web"
+                        lower_url = link.lower()
+                        if "linkedin.com" in lower_url: platform = "LinkedIn"
+                        elif "instagram.com" in lower_url: platform = "Instagram"
+                        elif "twitter.com" in lower_url: platform = "Twitter"
+                        elif "facebook.com" in lower_url: platform = "Facebook"
+                        elif "github.com" in lower_url: platform = "GitHub"
+                        
+                        # Match quality against the original query string
+                        score = self._calculate_match_quality(query_string, f"{title} {snippet}")
+                        results.append({
+                            "url": link,
+                            "title": title,
+                            "snippet": snippet,
+                            "platform": platform,
+                            "match_quality": score
+                        })
+                else:
+                    self.logger.error(f"Google CSE error: {resp.status_code} - {resp.text}")
+            except Exception as e:
+                self.logger.error(f"Google CSE search failure: {e}")
+                
+        return results
+
+    async def search_web_broad(self, query_string: str) -> List[Dict[str, Any]]:
+        """
+        Broad web search using fallback scrapers (Google/DDG) without site restrictions.
+        Used for full username/mention discovery.
+        """
+        self.logger.info(f"Broad web search for: {query_string}")
+        results = []
+        
+        # 1. Google (Broad)
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36"}
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+            try:
+                url = f"https://www.google.com/search?q={urllib.parse.quote(query_string)}&gbv=1"
+                resp = await client.get(url, headers=headers)
+                if resp.status_code == 200 and "unusual traffic" not in resp.text.lower():
+                    links = re.findall(r'<a href="/url\?q=(https?://[^&]*?)[^"]*?">(.*?)</a>', resp.text, re.DOTALL)
+                    for link, anchor_content in links[:8]:
+                        raw_url = urllib.parse.unquote(link)
+                        if "google.com" in raw_url: continue
+                        clean_title = re.sub(r'<.*?>', '', html.unescape(anchor_content)).strip()
+                        results.append({
+                            "url": raw_url, "title": clean_title, "platform": "Web", "match_quality": 70
+                        })
+            except: pass
+
+        # 2. DDG (Broad)
+        try:
+            url = f"https://html.duckduckgo.com/html/?q={urllib.parse.quote(query_string)}"
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(url, headers=headers)
+                if resp.status_code == 200:
+                    matches = re.findall(r'class="result__a" href="(.*?)">(.*?)</a>', resp.text, re.DOTALL)
+                    for link, title in matches[:8]:
+                        raw_url = html.unescape(link)
+                        if "uddg=" in raw_url:
+                            raw_url = urllib.parse.unquote(raw_url.split("uddg=")[1].split("&")[0])
+                        clean_title = re.sub(r'<.*?>', '', html.unescape(title)).strip()
+                        results.append({
+                            "url": raw_url, "title": clean_title, "platform": "Web", "match_quality": 70
+                        })
+        except: pass
+
+        return self._deduplicate_profiles(results)
+
     async def _search_google_profiles(self, name: str) -> List[Dict[str, Any]]:
-        """Scraper for Google's static HTML mode (gbv=1). Highly reliable for social profiles."""
+        """Scraper for Google's static HTML mode (gbv=1). Updated for better resilience."""
         profiles = []
-        # Google is best searched with specific dorks
         queries = [
             f'site:linkedin.com "{name}"',
             f'site:instagram.com "{name}"',
             f'site:facebook.com "{name}"',
-            f'site:twitter.com "{name}"',
-            f'"{name}" social media profiles'
+            f'site:twitter.com "{name}"'
         ]
         
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.5",
             "Referer": "https://www.google.com/"
         }
         
@@ -911,19 +1019,20 @@ class OSINTCollector:
                     url = f"https://www.google.com/search?q={urllib.parse.quote(query)}&gbv=1"
                     resp = await client.get(url, headers=headers)
                     if resp.status_code == 200:
-                        if "Our systems have detected unusual traffic" in resp.text:
+                        if "unusual traffic" in resp.text.lower():
                             self.logger.warning("Google blocked discovery (Captcha)")
                             break
                         
-                        # Extract result blocks: <div class="kCrYT"><a href="/url?q=LINK"><h3 class="...">TITLE</h3></a></div>
-                        blocks = re.findall(r'<div class="kCrYT"><a href="/url\?q=(https?://[^&]*?)[^"]*?">(.*?)</a>', resp.text, re.DOTALL)
+                        # More resilient link extraction
+                        links = re.findall(r'<a href="/url\?q=(https?://[^&]*?)[^"]*?">(.*?)</a>', resp.text, re.DOTALL)
                         
-                        for link, anchor_content in blocks[:5]:
+                        for link, anchor_content in links[:5]:
                             raw_url = urllib.parse.unquote(link)
                             clean_title = re.sub(r'<.*?>', '', anchor_content).strip()
                             clean_title = html.unescape(clean_title)
                             
-                            # Determine platform
+                            if "google.com" in raw_url: continue
+                            
                             platform = "Web"
                             lower_url = raw_url.lower()
                             if "linkedin.com" in lower_url: platform = "LinkedIn"
@@ -941,73 +1050,69 @@ class OSINTCollector:
                                     "platform": platform,
                                     "match_quality": score
                                 })
+                    await asyncio.sleep(1.5)
                 except Exception as e:
                     self.logger.debug(f"Google discovery failure: {e}")
-                await asyncio.sleep(1.0) # Respectful delay
                 
-        # De-duplicate
+        return self._deduplicate_profiles(profiles)
+
+    def _deduplicate_profiles(self, profiles: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Helper to deduplicate profiles by URL."""
         unique_profiles = []
         seen = set()
         for p in profiles:
-            if p['url'].rstrip('/') not in seen:
+            norm_url = p['url'].rstrip('/').lower()
+            if norm_url not in seen:
                 unique_profiles.append(p)
-                seen.add(p['url'].rstrip('/'))
+                seen.add(norm_url)
         return unique_profiles
 
     async def _search_duckduckgo_profiles(self, name: str) -> List[Dict[str, Any]]:
-        """Robust DDG scraper that uses generic link extraction and platform filtering."""
+        """Updated DDG scraper with more resilient extraction."""
         profiles = []
-        name_variants = self._get_name_permutations(name)
         platforms = [
             {"site": "linkedin.com", "label": "LinkedIn"},
             {"site": "twitter.com", "label": "Twitter"},
             {"site": "github.com", "label": "GitHub"},
-             {"site": "facebook.com", "label": "Facebook"},
+            {"site": "facebook.com", "label": "Facebook"},
             {"site": "instagram.com", "label": "Instagram"}
         ]
         
-        sem = asyncio.Semaphore(3)
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"}
+        
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+            for platform in platforms:
+                query = f'site:{platform["site"]} "{name}"'
+                try:
+                    url = f"https://html.duckduckgo.com/html/?q={urllib.parse.quote(query)}"
+                    resp = await client.get(url, headers=headers)
+                    if resp.status_code == 200:
+                        # Extract result links and titles
+                        matches = re.findall(r'class="result__a" href="(.*?)">(.*?)</a>', resp.text, re.DOTALL)
+                        
+                        for link, title in matches[:5]:
+                            raw_url = html.unescape(link)
+                            if "uddg=" in raw_url:
+                                raw_url = urllib.parse.unquote(raw_url.split("uddg=")[1].split("&")[0])
+                            
+                            if platform['site'] not in raw_url: continue
 
-        async def _search_platform(platform: Dict[str, str]):
-            async with sem:
-                headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"}
-                async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
-                    for q_name in name_variants:
-                        queries = [f'site:{platform["site"]} {q_name}', f'"{q_name}" {platform["site"]}']
-                        for query in queries:
-                            try:
-                                url = f"https://html.duckduckgo.com/html/?q={urllib.parse.quote(query)}"
-                                resp = await client.get(url, headers=headers)
-                                if resp.status_code == 200:
-                                    # More generic result pattern
-                                    blocks = re.findall(r'class="result__a".*?href="(.*?)".*?>(.*?)</a>.*?class="result__snippet".*?>(.*?)</a>', resp.text, re.DOTALL)
-                                    
-                                    found_for_query = False
-                                    for link, title, snippet in blocks[:5]:
-                                        raw_url = html.unescape(link)
-                                        if "uddg=" in raw_url:
-                                            raw_url = urllib.parse.unquote(raw_url.split("uddg=")[1].split("&")[0])
-                                        
-                                        if platform['site'] not in raw_url: continue
-
-                                        clean_title = re.sub(r'<.*?>', '', html.unescape(title)).strip()
-                                        clean_snippet = re.sub(r'<.*?>', '', html.unescape(snippet)).strip()
-                                        
-                                        score = self._calculate_match_quality(name, f"{clean_title} {clean_snippet}")
-                                        if score > 40:
-                                            profiles.append({
-                                                "url": raw_url, "title": clean_title, "snippet": clean_snippet,
-                                                "platform": platform['label'], "match_quality": score
-                                            })
-                                            if score > 85: found_for_query = True
-                                    
-                                    if found_for_query: return
-                            except Exception as e:
-                                self.logger.debug(f"DDG failure for {platform['site']}: {e}")
-                            await asyncio.sleep(0.5)
-
-        await asyncio.gather(*[_search_platform(p) for p in platforms])
-        return profiles
+                            clean_title = re.sub(r'<.*?>', '', html.unescape(title)).strip()
+                            score = self._calculate_match_quality(name, clean_title)
+                            
+                            if score > 40:
+                                profiles.append({
+                                    "url": raw_url,
+                                    "title": clean_title,
+                                    "snippet": "Profile found via DuckDuckGo.",
+                                    "platform": platform['label'],
+                                    "match_quality": score
+                                })
+                    await asyncio.sleep(1.0)
+                except Exception as e:
+                    self.logger.debug(f"DDG failure for {platform['site']}: {e}")
+                    
+        return self._deduplicate_profiles(profiles)
 
     async def search_bing_profiles(self, name: str) -> List[Dict[str, Any]]:
         """Generic Bing scraper that extracts all links and filters for known social platforms."""
@@ -1145,6 +1250,49 @@ class OSINTCollector:
                 self.logger.debug(f"GitHub name search error: {e}")
                 
         return results
+
+    async def fetch_profile_metadata(self, url: str, platform: str = "Web") -> Dict[str, Any]:
+        """
+        Fetches a profile URL and extracts metadata (OG tags, bio, real name).
+        Makes username scans 'smarter' by providing context.
+        """
+        metadata = {"title": None, "description": None, "image": None}
+        
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+        }
+        
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+            try:
+                resp = await client.get(url, headers=headers)
+                if resp.status_code == 200:
+                    html_content = resp.text
+                    
+                    # Extract OG Tags
+                    title_match = re.search(r'<meta.*?property="og:title".*?content="(.*?)".*?>', html_content, re.IGNORECASE)
+                    desc_match = re.search(r'<meta.*?property="og:description".*?content="(.*?)".*?>', html_content, re.IGNORECASE)
+                    
+                    if not title_match: # Fallback to <title> tag
+                        title_match = re.search(r'<title>(.*?)</title>', html_content, re.IGNORECASE)
+                        
+                    if title_match:
+                        metadata["title"] = html.unescape(title_match.group(1)).strip()
+                    if desc_match:
+                        metadata["description"] = html.unescape(desc_match.group(1)).strip()
+                        
+                    # Platform Specific Tweaks
+                    if platform == "GitHub" and "GitHub - " in (metadata["title"] or ""):
+                        metadata["title"] = metadata["title"].replace("GitHub - ", "")
+                        
+                    # Clean up titles that are just the URL or generic
+                    if metadata["title"] and (url in metadata["title"] or len(metadata["title"]) > 100):
+                        metadata["title"] = platform
+                        
+            except Exception as e:
+                self.logger.debug(f"Metadata fetch failed for {url}: {e}")
+                
+        return metadata
 
     def _calculate_match_quality(self, query: str, result_text: str) -> int:
         """

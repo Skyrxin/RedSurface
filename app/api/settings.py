@@ -1,10 +1,11 @@
 """
 Settings API — Manage API keys and module configuration.
 """
-from typing import Optional
+from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import ModuleConfig, get_db
 
@@ -22,18 +23,20 @@ class ModuleToggle(BaseModel):
 
 
 @router.get("/settings/modules")
-def list_module_configs(db: Session = Depends(get_db)):
+async def list_module_configs(db: AsyncSession = Depends(get_db)):
     """List all module configurations (API keys and enabled status)."""
-    configs = db.query(ModuleConfig).all()
+    result = await db.execute(select(ModuleConfig))
+    configs = result.scalars().all()
     return [c.to_dict() for c in configs]
 
 
 @router.put("/settings/modules/{module_name}/key")
-def set_api_key(module_name: str, body: ApiKeyUpdate, db: Session = Depends(get_db)):
+async def set_api_key(module_name: str, body: ApiKeyUpdate, db: AsyncSession = Depends(get_db)):
     """Set or update an API key for a module."""
-    config = db.query(ModuleConfig).filter(
-        ModuleConfig.module_name == module_name
-    ).first()
+    result = await db.execute(
+        select(ModuleConfig).filter(ModuleConfig.module_name == module_name)
+    )
+    config = result.scalars().first()
 
     if not config:
         config = ModuleConfig(module_name=module_name, api_key=body.api_key)
@@ -41,16 +44,18 @@ def set_api_key(module_name: str, body: ApiKeyUpdate, db: Session = Depends(get_
     else:
         config.api_key = body.api_key
 
-    db.commit()
+    await db.commit()
+    await db.refresh(config)
     return config.to_dict()
 
 
 @router.put("/settings/modules/{module_name}/toggle")
-def toggle_module(module_name: str, body: ModuleToggle, db: Session = Depends(get_db)):
+async def toggle_module(module_name: str, body: ModuleToggle, db: AsyncSession = Depends(get_db)):
     """Enable or disable a module."""
-    config = db.query(ModuleConfig).filter(
-        ModuleConfig.module_name == module_name
-    ).first()
+    result = await db.execute(
+        select(ModuleConfig).filter(ModuleConfig.module_name == module_name)
+    )
+    config = result.scalars().first()
 
     if not config:
         config = ModuleConfig(module_name=module_name, enabled=body.enabled)
@@ -58,19 +63,21 @@ def toggle_module(module_name: str, body: ModuleToggle, db: Session = Depends(ge
     else:
         config.enabled = body.enabled
 
-    db.commit()
+    await db.commit()
+    await db.refresh(config)
     return config.to_dict()
 
 
 @router.delete("/settings/modules/{module_name}/key")
-def delete_api_key(module_name: str, db: Session = Depends(get_db)):
+async def delete_api_key(module_name: str, db: AsyncSession = Depends(get_db)):
     """Remove an API key for a module."""
-    config = db.query(ModuleConfig).filter(
-        ModuleConfig.module_name == module_name
-    ).first()
+    result = await db.execute(
+        select(ModuleConfig).filter(ModuleConfig.module_name == module_name)
+    )
+    config = result.scalars().first()
     if not config:
         raise HTTPException(status_code=404, detail="Module config not found")
 
     config.api_key = None
-    db.commit()
+    await db.commit()
     return {"detail": "API key removed"}

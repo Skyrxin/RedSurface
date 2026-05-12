@@ -7,7 +7,7 @@ from plugins.base import PluginBase, PluginResult, PluginCategory, ApiType
 class DNSBrutePlugin(PluginBase):
     name = "DNS Brute-forcer"
     description = "Discover subdomains by brute-forcing common names via DNS resolution."
-    category = PluginCategory.INTERNAL
+    category = PluginCategory.DISCOVERY
     api_type = ApiType.INTERNAL
     requires_api_key = False
     result_types = ["subdomain"]

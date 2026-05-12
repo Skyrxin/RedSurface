@@ -50,3 +50,6 @@ Thumbs.db
 # Development and non-essential files
 project_dev/
 
+
+#Gemini-CLI
+.geminiignore

@@ -3,11 +3,13 @@ Scans API — REST endpoints for creating, listing, and managing scans.
 """
 import csv
 import io
-from typing import Optional
+import json
+from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
+from sqlalchemy import select, delete
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import Scan, ScanResult, ScanStatus, get_db
 from app.scan_engine import scan_engine
@@ -24,25 +26,8 @@ class ScanCreate(BaseModel):
     modules: list[str] = []  # Empty = all enabled modules
 
 
-class ScanResponse(BaseModel):
-    """Standard scan response."""
-    model_config = {"from_attributes": True}
-    id: int
-    name: str
-    target: str
-    target_type: str
-    status: str
-    mode: str
-    created_at: Optional[str] = None
-    started_at: Optional[str] = None
-    completed_at: Optional[str] = None
-    duration_seconds: Optional[float] = None
-    error_message: Optional[str] = None
-    result_count: int = 0
-
-
 @router.post("/scans", status_code=201)
-async def create_scan(scan_in: ScanCreate, db: Session = Depends(get_db)):
+async def create_scan(scan_in: ScanCreate, db: AsyncSession = Depends(get_db)):
     """Create a new scan and start it immediately."""
     scan = Scan(
         name=scan_in.name,
@@ -52,8 +37,8 @@ async def create_scan(scan_in: ScanCreate, db: Session = Depends(get_db)):
         config={"modules": scan_in.modules},
     )
     db.add(scan)
-    db.commit()
-    db.refresh(scan)
+    await db.commit()
+    await db.refresh(scan)
 
     # Launch scan in background
     scan_engine.launch_scan(scan.id)
@@ -62,48 +47,54 @@ async def create_scan(scan_in: ScanCreate, db: Session = Depends(get_db)):
 
 
 @router.get("/scans")
-def list_scans(
+async def list_scans(
     limit: int = 50,
     offset: int = 0,
     status: Optional[str] = None,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
     """List all scans with optional status filter."""
-    query = db.query(Scan).order_by(Scan.created_at.desc())
+    stmt = select(Scan).order_by(Scan.created_at.desc())
     if status:
-        query = query.filter(Scan.status == status)
-    scans = query.offset(offset).limit(limit).all()
+        stmt = stmt.filter(Scan.status == status)
+    
+    result = await db.execute(stmt.offset(offset).limit(limit))
+    scans = result.scalars().all()
     return [s.to_dict() for s in scans]
 
 
 @router.get("/scans/{scan_id}")
-def get_scan(scan_id: int, db: Session = Depends(get_db)):
+async def get_scan(scan_id: int, db: AsyncSession = Depends(get_db)):
     """Get scan details by ID."""
-    scan = db.query(Scan).filter(Scan.id == scan_id).first()
+    result = await db.execute(select(Scan).filter(Scan.id == scan_id))
+    scan = result.scalars().first()
     if not scan:
         raise HTTPException(status_code=404, detail="Scan not found")
     return scan.to_dict()
 
 
 @router.get("/scans/{scan_id}/results")
-def get_scan_results(
+async def get_scan_results(
     scan_id: int,
     result_type: Optional[str] = None,
     module: Optional[str] = None,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
     """Get results for a specific scan, with optional filters."""
-    scan = db.query(Scan).filter(Scan.id == scan_id).first()
+    result = await db.execute(select(Scan).filter(Scan.id == scan_id))
+    scan = result.scalars().first()
     if not scan:
         raise HTTPException(status_code=404, detail="Scan not found")
 
-    query = db.query(ScanResult).filter(ScanResult.scan_id == scan_id)
+    stmt = select(ScanResult).filter(ScanResult.scan_id == scan_id)
     if result_type:
-        query = query.filter(ScanResult.result_type == result_type)
+        stmt = stmt.filter(ScanResult.result_type == result_type)
     if module:
-        query = query.filter(ScanResult.module_name == module)
+        stmt = stmt.filter(ScanResult.module_name == module)
 
-    results = query.all()
+    res = await db.execute(stmt)
+    results = res.scalars().all()
+    
     return {
         "scan": scan.to_dict(),
         "results": [r.to_dict() for r in results],
@@ -112,9 +103,10 @@ def get_scan_results(
 
 
 @router.delete("/scans/{scan_id}")
-def delete_scan(scan_id: int, db: Session = Depends(get_db)):
+async def delete_scan(scan_id: int, db: AsyncSession = Depends(get_db)):
     """Delete a scan and its results."""
-    scan = db.query(Scan).filter(Scan.id == scan_id).first()
+    result = await db.execute(select(Scan).filter(Scan.id == scan_id))
+    scan = result.scalars().first()
     if not scan:
         raise HTTPException(status_code=404, detail="Scan not found")
 
@@ -122,15 +114,16 @@ def delete_scan(scan_id: int, db: Session = Depends(get_db)):
     if scan.status == ScanStatus.RUNNING.value:
         scan_engine.cancel_scan(scan_id)
 
-    db.delete(scan)
-    db.commit()
+    await db.delete(scan)
+    await db.commit()
     return {"detail": "Scan deleted"}
 
 
 @router.post("/scans/{scan_id}/cancel")
-def cancel_scan(scan_id: int, db: Session = Depends(get_db)):
+async def cancel_scan(scan_id: int, db: AsyncSession = Depends(get_db)):
     """Cancel a running scan."""
-    scan = db.query(Scan).filter(Scan.id == scan_id).first()
+    result = await db.execute(select(Scan).filter(Scan.id == scan_id))
+    scan = result.scalars().first()
     if not scan:
         raise HTTPException(status_code=404, detail="Scan not found")
     if scan.status != ScanStatus.RUNNING.value:
@@ -139,23 +132,26 @@ def cancel_scan(scan_id: int, db: Session = Depends(get_db)):
     cancelled = scan_engine.cancel_scan(scan_id)
     if cancelled:
         scan.status = ScanStatus.CANCELLED.value
-        db.commit()
+        await db.commit()
         return {"detail": "Scan cancelled"}
     raise HTTPException(status_code=400, detail="Could not cancel scan")
 
 
 @router.get("/scans/{scan_id}/export")
-def export_scan(
+async def export_scan(
     scan_id: int,
     format: str = "json",
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
     """Export scan results as JSON or CSV."""
-    scan = db.query(Scan).filter(Scan.id == scan_id).first()
+    result = await db.execute(select(Scan).filter(Scan.id == scan_id))
+    scan = result.scalars().first()
     if not scan:
         raise HTTPException(status_code=404, detail="Scan not found")
 
-    results = db.query(ScanResult).filter(ScanResult.scan_id == scan_id).all()
+    res = await db.execute(select(ScanResult).filter(ScanResult.scan_id == scan_id))
+    results = res.scalars().all()
+    
     filename_base = f"redsurface_{scan.target}_{scan.id}"
 
     if format == "csv":
@@ -177,7 +173,6 @@ def export_scan(
         )
     else:
         # JSON export
-        import json
         export_data = {
             "scan": scan.to_dict(),
             "results": [r.to_dict() for r in results],
@@ -192,13 +187,16 @@ def export_scan(
 
 
 @router.get("/scans/{scan_id}/graph")
-def get_scan_graph(scan_id: int, db: Session = Depends(get_db)):
+async def get_scan_graph(scan_id: int, db: AsyncSession = Depends(get_db)):
     """Get graph data for D3.js visualization."""
-    scan = db.query(Scan).filter(Scan.id == scan_id).first()
+    result = await db.execute(select(Scan).filter(Scan.id == scan_id))
+    scan = result.scalars().first()
     if not scan:
         raise HTTPException(status_code=404, detail="Scan not found")
 
-    results = db.query(ScanResult).filter(ScanResult.scan_id == scan_id).all()
+    res = await db.execute(select(ScanResult).filter(ScanResult.scan_id == scan_id))
+    results = res.scalars().all()
+    
     return {
         "target": scan.target,
         "results": [r.to_dict() for r in results],

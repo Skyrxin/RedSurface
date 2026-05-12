@@ -1,10 +1,7 @@
 """
 Modules API — List and configure available plugins.
 """
-from fastapi import APIRouter, Depends
-from sqlalchemy.orm import Session
-
-from app.database import ModuleConfig, get_db
+from fastapi import APIRouter
 from plugins import registry
 
 router = APIRouter(tags=["modules"])

@@ -8,10 +8,11 @@ import traceback
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
+from sqlalchemy import select
 from app import database as db_module
-from app.database import Scan, ScanResult, ScanStatus, ModuleConfig
+from app.database import Scan, ScanResult, ScanStatus, ModuleConfig, AsyncSessionLocal
 from plugins import registry
-from plugins.base import PluginBase, PluginResult
+from plugins.base import PluginBase, PluginResult, PluginCategory
 
 logger = logging.getLogger("redsurface")
 
@@ -22,11 +23,11 @@ class ScanEngine:
     def __init__(self):
         self._running_tasks: Dict[int, asyncio.Task] = {}
 
-    def _get_session(self):
-        """Get a database session, initializing if needed."""
-        if db_module.SessionLocal is None:
-            db_module.init_db()
-        return db_module.SessionLocal()
+    async def _get_session(self):
+        """Get an async database session, initializing if needed."""
+        if db_module.AsyncSessionLocal is None:
+            await db_module.init_db()
+        return db_module.AsyncSessionLocal()
 
     async def start_scan(self, scan_id: int):
         """
@@ -35,9 +36,10 @@ class ScanEngine:
         Args:
             scan_id: Database ID of the scan to execute.
         """
-        db = self._get_session()
+        db = await self._get_session()
         try:
-            scan = db.query(Scan).filter(Scan.id == scan_id).first()
+            result = await db.execute(select(Scan).filter(Scan.id == scan_id))
+            scan = result.scalars().first()
             if not scan:
                 logger.error(f"Scan {scan_id} not found in database")
                 return
@@ -45,7 +47,7 @@ class ScanEngine:
             # Update status to running
             scan.status = ScanStatus.RUNNING.value
             scan.started_at = datetime.now(timezone.utc)
-            db.commit()
+            await db.commit()
             logger.info(f"Scan {scan_id} started for target: {scan.target}")
 
             target = scan.target
@@ -63,7 +65,8 @@ class ScanEngine:
             logger.info(f"Scan {scan_id}: {len(plugins)} plugins loaded")
 
             # Load API keys from DB into plugins
-            module_configs = db.query(ModuleConfig).all()
+            module_configs_result = await db.execute(select(ModuleConfig))
+            module_configs = module_configs_result.scalars().all()
             key_map = {mc.module_name: mc for mc in module_configs}
             for plugin in plugins:
                 mc = key_map.get(plugin.name)
@@ -78,46 +81,73 @@ class ScanEngine:
                 f"(skipped {len(plugins) - len(ready_plugins)} needing API keys)"
             )
 
-            # Run plugins concurrently
-            tasks = []
-            for plugin in ready_plugins:
-                tasks.append(self._run_plugin(plugin, target, scan_config))
-
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-
-            # Save results to DB
+            # Group plugins by stage
+            discovery_plugins = [p for p in ready_plugins if p.category == PluginCategory.DISCOVERY]
+            internal_plugins = [p for p in ready_plugins if p.category == PluginCategory.INTERNAL]
+            other_plugins = [p for p in ready_plugins if p.category not in [PluginCategory.DISCOVERY, PluginCategory.INTERNAL]]
+            
+            stages = [discovery_plugins, internal_plugins, other_plugins]
+            
             total_values = 0
-            for result in results:
-                if isinstance(result, Exception):
-                    logger.error(f"Scan {scan_id}: plugin exception: {result}")
-                    db.add(ScanResult(
-                        scan_id=scan_id,
-                        module_name="error",
-                        result_type="error",
-                        value=str(result),
-                    ))
+            for stage_idx, stage_plugins in enumerate(stages):
+                if not stage_plugins:
                     continue
-                if isinstance(result, PluginResult):
-                    total_values += len(result.values)
-                    for value in result.values:
+                
+                logger.info(f"Scan {scan_id}: Starting Stage {stage_idx + 1} ({len(stage_plugins)} plugins)")
+                
+                tasks = []
+                for plugin in stage_plugins:
+                    tasks.append(self._run_plugin(plugin, target, scan_config))
+
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+
+                # Save results to DB after each stage so next stage can read them
+                for result in results:
+                    if isinstance(result, Exception):
+                        logger.error(f"Scan {scan_id}: plugin exception: {result}")
                         db.add(ScanResult(
                             scan_id=scan_id,
-                            module_name=result.plugin_name,
-                            result_type=result.result_type,
-                            value=value,
-                            metadata_json=result.metadata,
+                            module_name="error",
+                            result_type="error",
+                            value=str(result),
                         ))
-                    if result.errors:
-                        for err in result.errors:
-                            logger.warning(f"Scan {scan_id}: {result.plugin_name}: {err}")
+                        continue
+                    if isinstance(result, PluginResult):
+                        total_values += len(result.values)
+                        for idx, value in enumerate(result.values):
+                            parent_value = None
+                            if result.parent_values and idx < len(result.parent_values):
+                                parent_value = result.parent_values[idx]
+                            
+                            # Use per-value metadata if provided, otherwise fallback to global metadata
+                            metadata = result.metadata
+                            if result.per_value_metadata and idx < len(result.per_value_metadata):
+                                metadata = result.per_value_metadata[idx]
+                            
                             db.add(ScanResult(
                                 scan_id=scan_id,
                                 module_name=result.plugin_name,
-                                result_type="error",
-                                value=err,
+                                result_type=result.result_type,
+                                value=value,
+                                parent_value=parent_value,
+                                metadata_json=metadata,
                             ))
+                        if result.errors:
+                            for err in result.errors:
+                                logger.warning(f"Scan {scan_id}: {result.plugin_name}: {err}")
+                                db.add(ScanResult(
+                                    scan_id=scan_id,
+                                    module_name=result.plugin_name,
+                                    result_type="error",
+                                    value=err,
+                                ))
+                await db.commit() # Commit after each stage
 
             # Mark scan as completed
+            # Re-fetch scan to avoid session issues if it was closed or expired
+            result = await db.execute(select(Scan).filter(Scan.id == scan_id))
+            scan = result.scalars().first()
+            
             scan.status = ScanStatus.COMPLETED.value
             scan.completed_at = datetime.now(timezone.utc)
             if scan.started_at:
@@ -129,7 +159,7 @@ class ScanEngine:
                 if completed.tzinfo is None:
                     completed = completed.replace(tzinfo=timezone.utc)
                 scan.duration_seconds = (completed - started).total_seconds()
-            db.commit()
+            await db.commit()
             logger.info(
                 f"Scan {scan_id} completed: {total_values} results "
                 f"in {scan.duration_seconds:.1f}s"
@@ -138,14 +168,18 @@ class ScanEngine:
         except Exception as e:
             logger.error(f"Scan {scan_id} failed: {e}\n{traceback.format_exc()}")
             try:
-                scan.status = ScanStatus.FAILED.value
-                scan.error_message = traceback.format_exc()
-                scan.completed_at = datetime.now(timezone.utc)
-                db.commit()
+                # Re-fetch to be safe
+                result = await db.execute(select(Scan).filter(Scan.id == scan_id))
+                scan = result.scalars().first()
+                if scan:
+                    scan.status = ScanStatus.FAILED.value
+                    scan.error_message = traceback.format_exc()
+                    scan.completed_at = datetime.now(timezone.utc)
+                    await db.commit()
             except Exception:
                 pass
         finally:
-            db.close()
+            await db.close()
 
     async def _run_plugin(
         self, plugin: PluginBase, target: str, config: dict

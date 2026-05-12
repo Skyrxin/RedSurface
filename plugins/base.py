@@ -35,6 +35,8 @@ class PluginResult:
     plugin_name: str
     result_type: str  # subdomain, email, ip, technology, vulnerability, etc.
     values: List[str] = field(default_factory=list)
+    parent_values: List[Optional[str]] = field(default_factory=list)  # Parallel to values
+    per_value_metadata: List[Dict[str, Any]] = field(default_factory=list)  # Parallel to values
     metadata: Dict[str, Any] = field(default_factory=dict)
     errors: List[str] = field(default_factory=list)
     success: bool = True

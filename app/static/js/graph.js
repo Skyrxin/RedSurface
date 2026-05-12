@@ -120,9 +120,31 @@ class AttackSurfaceGraph {
                 module: module,
             });
 
-            // Link to central domain
+            // Link to parent or central domain
+            let sourceId = domainId;
+            if (result.parent_value) {
+                // Determine parent type (heuristic: technology links to subdomain, vulnerability links to technology)
+                let parentType = 'subdomain';
+                if (type === 'vulnerability') parentType = 'technology';
+                else if (type === 'port' || type === 'technology' || type === 'waf' || type === 'directory') parentType = 'subdomain';
+                else if (type === 'subdomain') parentType = 'domain';
+                
+                const possibleParentId = `${parentType}:${result.parent_value}`;
+                // Only link to parent if it exists in our node map, otherwise fallback to domain
+                if (nodeMap.has(possibleParentId)) {
+                    sourceId = possibleParentId;
+                } else {
+                    // Try without type prefix if we can't find it
+                    // Search nodes for any node with fullLabel === result.parent_value
+                    const parentNode = nodes.find(n => n.fullLabel === result.parent_value);
+                    if (parentNode) {
+                        sourceId = parentNode.id;
+                    }
+                }
+            }
+
             links.push({
-                source: domainId,
+                source: sourceId,
                 target: nodeId,
                 type: type,
             });

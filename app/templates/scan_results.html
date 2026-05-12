@@ -195,6 +195,36 @@
                                 </div>
                             </div>
                             {% endfor %}
+                        {% elif meta.get('title') or meta.get('platform') %}
+                            {# Support for per-value metadata (Smart OSINT) #}
+                            <div class="profile-card">
+                                <div class="profile-header">
+                                    <div class="profile-platform-icon">
+                                        {% if meta.platform == 'LinkedIn' %}<i class="fab fa-linkedin" style="color: #0077b5;"></i>
+                                        {% elif meta.platform == 'Twitter' %}<i class="fab fa-twitter" style="color: #1da1f2;"></i>
+                                        {% elif meta.platform == 'GitHub' %}<i class="fab fa-github" style="color: #f1f5f9;"></i>
+                                        {% elif meta.platform == 'Facebook' %}<i class="fab fa-facebook" style="color: #1877f2;"></i>
+                                        {% elif meta.platform == 'Instagram' %}<i class="fab fa-instagram" style="color: #e4405f;"></i>
+                                        {% else %}<i class="fas fa-user-circle"></i>{% endif %}
+                                    </div>
+                                    <div class="profile-info">
+                                        <span class="profile-title" title="{{ meta.title }}">{{ meta.title }}</span>
+                                        <span class="profile-platform-name">{{ meta.platform }}</span>
+                                    </div>
+                                </div>
+                                <div class="profile-snippet">
+                                    {{ meta.snippet or "No profile description available." }}
+                                </div>
+                                <div class="profile-footer">
+                                    <div class="match-quality-box">
+                                        <span class="match-label">Match Quality</span>
+                                        <span class="match-quality-badge {% if meta.match_quality >= 80 %}match-high{% elif meta.match_quality >= 50 %}match-medium{% else %}match-low{% endif %}">
+                                            {{ meta.match_quality or 100 }}% Match
+                                        </span>
+                                    </div>
+                                    <a href="{{ meta.url or item.value }}" target="_blank" class="profile-link">View Profile</a>
+                                </div>
+                            </div>
                         {% else %}
                             <div class="profile-card">
                                 <div class="profile-header">

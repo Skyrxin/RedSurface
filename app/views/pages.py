@@ -4,7 +4,8 @@ Page Routes — Serves Jinja2-rendered HTML pages.
 from pathlib import Path
 from fastapi import APIRouter, Request, Depends
 from fastapi.templating import Jinja2Templates
-from sqlalchemy.orm import Session
+from sqlalchemy import select, func
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import Scan, ScanResult, ModuleConfig, get_db
 
@@ -14,10 +15,11 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 router = APIRouter()
 
 
-def _hydrate_plugin_keys(db: Session):
+async def _hydrate_plugin_keys(db: AsyncSession):
     """Load API keys from DB into in-memory plugin objects so is_ready() is accurate."""
     from plugins import registry
-    configs = db.query(ModuleConfig).all()
+    result = await db.execute(select(ModuleConfig))
+    configs = result.scalars().all()
     key_map = {c.module_name: c for c in configs}
     for plugin in registry.all():
         mc = key_map.get(plugin.name)
@@ -27,18 +29,34 @@ def _hydrate_plugin_keys(db: Session):
 
 
 @router.get("/")
-def dashboard(request: Request, db: Session = Depends(get_db)):
+async def dashboard(request: Request, db: AsyncSession = Depends(get_db)):
     """Main dashboard — shows scan history and quick actions."""
     from plugins import registry
 
-    recent_scans = (
-        db.query(Scan).order_by(Scan.created_at.desc()).limit(10).all()
-    )
-    total_results = db.query(ScanResult).count()
+    stmt = select(Scan).order_by(Scan.created_at.desc()).limit(10)
+    result = await db.execute(stmt)
+    recent_scans = result.scalars().all()
+
+    total_results_stmt = select(func.count()).select_from(ScanResult)
+    total_results_res = await db.execute(total_results_stmt)
+    total_results = total_results_res.scalar()
+
+    total_scans_stmt = select(func.count()).select_from(Scan)
+    total_scans_res = await db.execute(total_scans_stmt)
+    total_scans = total_scans_res.scalar()
+
+    running_stmt = select(func.count()).select_from(Scan).filter(Scan.status == "running")
+    running_res = await db.execute(running_stmt)
+    running_count = running_res.scalar()
+
+    completed_stmt = select(func.count()).select_from(Scan).filter(Scan.status == "completed")
+    completed_res = await db.execute(completed_stmt)
+    completed_count = completed_res.scalar()
+
     stats = {
-        "total_scans": db.query(Scan).count(),
-        "running": db.query(Scan).filter(Scan.status == "running").count(),
-        "completed": db.query(Scan).filter(Scan.status == "completed").count(),
+        "total_scans": total_scans,
+        "running": running_count,
+        "completed": completed_count,
         "total_results": total_results,
     }
     return templates.TemplateResponse(request, "dashboard.html", context={
@@ -49,10 +67,10 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/scan/new")
-def new_scan(request: Request, db: Session = Depends(get_db)):
+async def new_scan(request: Request, db: AsyncSession = Depends(get_db)):
     """New scan configuration page."""
     from plugins import registry
-    _hydrate_plugin_keys(db)
+    await _hydrate_plugin_keys(db)
     # Only domain modules for standard scan
     modules = [m for m in registry.info_all() if "domain" in m.get("target_types", []) or "ip" in m.get("target_types", [])]
     return templates.TemplateResponse(request, "scan_new.html", context={
@@ -61,27 +79,28 @@ def new_scan(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/scan/people")
-def new_people_scan(request: Request, db: Session = Depends(get_db)):
+async def new_people_scan(request: Request, db: AsyncSession = Depends(get_db)):
     """People Lookup OSINT configuration page."""
     from plugins import registry
-    _hydrate_plugin_keys(db)
+    await _hydrate_plugin_keys(db)
     # Only people-focused modules
     people_types = ["email", "username", "person"]
     modules = [m for m in registry.info_all() if any(t in people_types for t in m.get("target_types", []))]
-    print(f"[DEBUG] /scan/people modules found: {[m['name'] for m in modules]}")
     return templates.TemplateResponse(request, "scan_people.html", context={
         "modules": modules,
     })
 
 
 @router.get("/scan/{scan_id}")
-def scan_results(request: Request, scan_id: int, db: Session = Depends(get_db)):
+async def scan_results(request: Request, scan_id: int, db: AsyncSession = Depends(get_db)):
     """Scan results page with findings, stats, and export."""
-    scan = db.query(Scan).filter(Scan.id == scan_id).first()
+    result = await db.execute(select(Scan).filter(Scan.id == scan_id))
+    scan = result.scalars().first()
     if not scan:
         return templates.TemplateResponse(request, "404.html", status_code=404)
 
-    results = db.query(ScanResult).filter(ScanResult.scan_id == scan_id).all()
+    results_res = await db.execute(select(ScanResult).filter(ScanResult.scan_id == scan_id))
+    results = results_res.scalars().all()
 
     # Group results by type
     grouped = {}
@@ -112,13 +131,15 @@ def scan_results(request: Request, scan_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/scan/{scan_id}/report")
-def scan_report(request: Request, scan_id: int, db: Session = Depends(get_db)):
+async def scan_report(request: Request, scan_id: int, db: AsyncSession = Depends(get_db)):
     """Printable PDF report page — standalone, print-optimized layout."""
-    scan = db.query(Scan).filter(Scan.id == scan_id).first()
+    result = await db.execute(select(Scan).filter(Scan.id == scan_id))
+    scan = result.scalars().first()
     if not scan:
         return templates.TemplateResponse(request, "404.html", status_code=404)
 
-    results = db.query(ScanResult).filter(ScanResult.scan_id == scan_id).all()
+    results_res = await db.execute(select(ScanResult).filter(ScanResult.scan_id == scan_id))
+    results = results_res.scalars().all()
 
     # Group results by type
     grouped = {}
@@ -143,10 +164,10 @@ def scan_report(request: Request, scan_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/modules")
-def modules_page(request: Request, db: Session = Depends(get_db)):
+async def modules_page(request: Request, db: AsyncSession = Depends(get_db)):
     """Browse and configure modules page."""
     from plugins import registry
-    _hydrate_plugin_keys(db)
+    await _hydrate_plugin_keys(db)
     modules = registry.info_all()
     return templates.TemplateResponse(request, "modules.html", context={
         "modules": modules,
@@ -154,12 +175,13 @@ def modules_page(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/settings")
-def settings_page(request: Request, db: Session = Depends(get_db)):
+async def settings_page(request: Request, db: AsyncSession = Depends(get_db)):
     """API key and settings management page."""
     from app.database import ModuleConfig
     from plugins import registry
 
-    configs = db.query(ModuleConfig).all()
+    result = await db.execute(select(ModuleConfig))
+    configs = result.scalars().all()
     config_map = {c.module_name: c.to_dict() for c in configs}
     modules = registry.info_all()
 

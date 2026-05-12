@@ -9,9 +9,10 @@ from typing import Optional
 
 from sqlalchemy import (
     create_engine, Column, Integer, String, Text, DateTime, Boolean, Float,
-    ForeignKey, JSON, Enum as SAEnum
+    ForeignKey, JSON, Enum as SAEnum, select
 )
-from sqlalchemy.orm import declarative_base, sessionmaker, relationship, Session
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 import enum
 
 # Database path
@@ -20,7 +21,7 @@ DB_PATH = DB_DIR / "redsurface.db"
 
 # SQLAlchemy setup
 engine = None
-SessionLocal = None
+AsyncSessionLocal = None
 Base = declarative_base()
 
 
@@ -82,6 +83,7 @@ class ScanResult(Base):
     module_name = Column(String(100), nullable=False)
     result_type = Column(String(50), nullable=False)  # subdomain, email, ip, tech, vuln, etc.
     value = Column(Text, nullable=False)
+    parent_value = Column(String(255), nullable=True)  # For linking to parent (e.g., subdomain -> ip)
     metadata_json = Column(JSON, nullable=True)  # Extra structured data
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
@@ -95,6 +97,7 @@ class ScanResult(Base):
             "module_name": self.module_name,
             "result_type": self.result_type,
             "value": self.value,
+            "parent_value": self.parent_value,
             "metadata": self.metadata_json,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
@@ -123,27 +126,37 @@ class ModuleConfig(Base):
         }
 
 
-def init_db():
-    """Initialize the database, creating tables if they don't exist."""
-    global engine, SessionLocal
+async def init_db():
+    """Initialize the database asynchronously."""
+    global engine, AsyncSessionLocal
 
     DB_DIR.mkdir(parents=True, exist_ok=True)
 
-    engine = create_engine(
-        f"sqlite:///{DB_PATH}",
+    # Use aiosqlite driver
+    engine = create_async_engine(
+        f"sqlite+aiosqlite:///{DB_PATH}",
         connect_args={"check_same_thread": False},
         echo=False,
     )
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    Base.metadata.create_all(bind=engine)
+    AsyncSessionLocal = async_sessionmaker(
+        bind=engine, 
+        class_=AsyncSession, 
+        autocommit=False, 
+        autoflush=False, 
+        expire_on_commit=False
+    )
+    
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
 
 
-def get_db() -> Session:
-    """Get a database session. Use as a dependency in FastAPI routes."""
-    if SessionLocal is None:
-        init_db()
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+async def get_db() -> AsyncSession:
+    """Get an async database session. Use as a dependency in FastAPI routes."""
+    if AsyncSessionLocal is None:
+        await init_db()
+    
+    async with AsyncSessionLocal() as session:
+        try:
+            yield session
+        finally:
+            await session.close()

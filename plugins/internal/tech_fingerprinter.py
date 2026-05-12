@@ -48,21 +48,23 @@ class TechFingerprinterPlugin(PluginBase):
             scan_id = (config or {}).get("scan_id")
             if scan_id:
                 try:
-                    from app.database import ScanResult, SessionLocal
-                    db = SessionLocal()
-                    subdomain_results = (
-                        db.query(ScanResult)
-                        .filter(
+                    from sqlalchemy import select
+                    from app.database import ScanResult, AsyncSessionLocal
+                    
+                    if AsyncSessionLocal is None:
+                        from app.database import init_db
+                        await init_db()
+                        
+                    async with AsyncSessionLocal() as db:
+                        stmt = select(ScanResult).filter(
                             ScanResult.scan_id == scan_id,
                             ScanResult.result_type == "subdomain",
-                        )
-                        .limit(15)
-                        .all()
-                    )
-                    for sr in subdomain_results:
-                        if sr.value and sr.value != target and sr.value not in hosts_to_scan:
-                            hosts_to_scan.append(sr.value)
-                    db.close()
+                        ).limit(15)
+                        subdomain_results = (await db.execute(stmt)).scalars().all()
+                        
+                        for sr in subdomain_results:
+                            if sr.value and sr.value != target and sr.value not in hosts_to_scan:
+                                hosts_to_scan.append(sr.value)
                 except Exception:
                     pass  # If DB access fails, just scan the main target
 
@@ -76,9 +78,8 @@ class TechFingerprinterPlugin(PluginBase):
             responses = data.get("responses", {})
 
             values = []
-            technologies_detail = []
-            vulnerabilities = []
-            waf_results = {}
+            parent_values = []
+            per_value_metadata = []
 
             for host, tech_list in techs.items():
                 for tech in tech_list:
@@ -87,58 +88,51 @@ class TechFingerprinterPlugin(PluginBase):
                     if td.get("version"):
                         label += f" {td['version']}"
 
-                    host_label = f"{label} ({host})" if host != target else label
-                    values.append(host_label)
-
-                    tech_entry = {
+                    values.append(label)
+                    parent_values.append(host)
+                    
+                    # Attach specific metadata for this tech result
+                    per_value_metadata.append({
                         "host": host,
                         "name": td["name"],
                         "version": td.get("version"),
                         "source": td.get("source"),
                         "confidence": td.get("confidence"),
-                        "category": td.get("category"),
                         "cve_count": len(td.get("cves", [])),
-                    }
-                    technologies_detail.append(tech_entry)
+                        "cves": td.get("cves", []),
+                        "status_code": responses.get(host, {}).get("status_code"),
+                    })
 
-                    # Extract CVEs
+                    # Add CVEs as separate nodes linked to this tech
                     for cve in td.get("cves", []):
-                        vuln = {
+                        cve_id = cve.get("cve_id")
+                        values.append(cve_id)
+                        parent_values.append(label) # Link CVE to the technology
+                        per_value_metadata.append({
+                            "type": "vulnerability",
                             "host": host,
                             "technology": label,
-                            "cve_id": cve.get("cve_id"),
                             "severity": cve.get("severity"),
                             "cvss_score": cve.get("cvss_score"),
                             "description": cve.get("description"),
-                            "recommendation": cve.get("recommendation"),
-                        }
-                        vulnerabilities.append(vuln)
-                        values.append(
-                            f"CVE: {cve.get('cve_id')} ({cve.get('severity', 'N/A')}) - {label}"
-                        )
+                        })
 
             for host, waf_name in wafs.items():
                 if waf_name:
-                    waf_results[host] = waf_name
-                    values.append(f"WAF: {waf_name} ({host})")
+                    values.append(waf_name)
+                    parent_values.append(host)
+                    per_value_metadata.append({
+                        "host": host,
+                        "waf_name": waf_name,
+                        "type": "waf"
+                    })
 
-            result.values = sorted(set(values))
+            result.values = values
+            result.parent_values = parent_values
+            result.per_value_metadata = per_value_metadata
             result.metadata = {
                 "hosts_scanned": len(hosts_to_scan),
-                "total_technologies": len(technologies_detail),
-                "total_vulnerabilities": len(vulnerabilities),
-                "total_wafs": len(waf_results),
-                "technologies": technologies_detail,
-                "vulnerabilities": vulnerabilities,
-                "wafs": waf_results,
-                "responses": {
-                    host: {
-                        "status_code": r.get("status_code"),
-                        "server": r.get("server"),
-                        "content_type": r.get("content_type"),
-                    }
-                    for host, r in responses.items()
-                } if responses else {},
+                "total_results": len(values),
             }
         except Exception as e:
             result.errors.append(str(e))

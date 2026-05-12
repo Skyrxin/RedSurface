@@ -20,7 +20,7 @@ STATIC_DIR = APP_DIR / "static"
 async def lifespan(app: FastAPI):
     """Initialize resources on startup, cleanup on shutdown."""
     # Initialize database
-    init_db()
+    await init_db()
 
     # Load plugins
     from plugins import registry
