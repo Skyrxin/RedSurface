@@ -334,7 +334,7 @@ function initAttackGraph(containerId, scanId) {
                 new AttackSurfaceGraph(containerId, data);
             } else {
                 document.getElementById(containerId).innerHTML =
-                    '<div class="graph-empty">No graph data available yet.</div>';
+                    '<div class="graph-empty" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--text-muted);">No graph data for this scan.</div>';
             }
         })
         .catch(err => {

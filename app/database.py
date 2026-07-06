@@ -9,7 +9,7 @@ from typing import Optional
 
 from sqlalchemy import (
     create_engine, Column, Integer, String, Text, DateTime, Boolean, Float,
-    ForeignKey, JSON, Enum as SAEnum, select
+    ForeignKey, JSON, Enum as SAEnum, select, func
 )
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
@@ -56,7 +56,7 @@ class Scan(Base):
     # Relationships
     results = relationship("ScanResult", back_populates="scan", cascade="all, delete-orphan")
 
-    def to_dict(self):
+    def to_dict(self, result_count: int = 0):
         """Convert model to dictionary for API responses."""
         return {
             "id": self.id,
@@ -71,9 +71,7 @@ class Scan(Base):
             "duration_seconds": self.duration_seconds,
             "error_message": self.error_message,
             "config": self.config,
-            # We omit result_count here because lazy-loading 'results' triggers synchronous IO
-            # and fails in our async event loop.
-            "result_count": 0,
+            "result_count": result_count,
         }
 
 
@@ -101,7 +99,7 @@ class ScanResult(Base):
             "result_type": self.result_type,
             "value": self.value,
             "parent_value": self.parent_value,
-            "metadata": self.metadata_json,
+            "metadata": self.metadata_json or {},
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
 

@@ -7,25 +7,44 @@
     <h1>Settings</h1>
 
     <div class="form-section">
-        <h3>API Keys</h3>
-        <p class="form-hint">Configure API keys for modules that require them. Keys are stored locally in the database.
+        <h3>API Keys & Configuration</h3>
+        <p class="form-hint">Configure API keys for modules to enable high-performance discovery. Keys are stored locally in the database.
         </p>
 
         <div class="api-keys-list">
-            {% for mod in modules if mod.requires_api_key %}
-            <div class="api-key-row">
-                <div class="api-key-info">
-                    <span class="api-key-name">{{ mod.name }}</span>
-                    <span class="module-type-badge type-{{ mod.api_type | lower | replace(' ', '-') }}">{{ mod.api_type
-                        }}</span>
+            {% for mod in modules if mod.api_key_names %}
+            <div class="api-key-card">
+                <div class="api-key-header">
+                    <div class="api-key-info">
+                        <span class="api-key-name">{{ mod.name }}</span>
+                        <span class="module-type-badge type-{{ mod.api_type | lower | replace(' ', '-') }}">{{ mod.api_type }}</span>
+                    </div>
                     {% if mod.website %}
-                    <a href="{{ mod.website }}" target="_blank" class="api-link">Get API Key →</a>
+                    <a href="{{ mod.website }}" target="_blank" class="api-link">Get API Credentials →</a>
                     {% endif %}
                 </div>
-                <div class="api-key-input">
-                    <input type="password" id="key-{{ mod.name | replace(' ', '-') }}" placeholder="Enter API key..."
-                        value="{% if config_map.get(mod.name, {}).get('has_api_key') %}••••••••{% endif %}">
-                    <button class="btn-sm" onclick="saveKey('{{ mod.name }}')">Save</button>
+                
+                <div class="api-key-inputs">
+                    {% for key_name in mod.api_key_names %}
+                    <div class="api-input-group">
+                        <label for="key-{{ mod.name | replace(' ', '-') }}-{{ key_name }}">{{ key_name | replace('_', ' ') | title }}</label>
+                        <div class="api-input-row">
+                            {% set has_key = false %}
+                            {% set config = config_map.get(mod.name, {}) %}
+                            {% if loop.first and config.get('has_api_key') %}
+                                {% set has_key = true %}
+                            {% elif config.get('keys', {}).get(key_name) %}
+                                {% set has_key = true %}
+                            {% endif %}
+                            
+                            <input type="password" 
+                                   id="key-{{ mod.name | replace(' ', '-') }}-{{ key_name }}" 
+                                   placeholder="Enter {{ key_name }}..."
+                                   value="{% if has_key %}••••••••{% endif %}">
+                            <button class="btn-sm" onclick="saveKey('{{ mod.name }}', '{{ key_name }}', '{{ 'api_key' if loop.first else key_name }}')">Save</button>
+                        </div>
+                    </div>
+                    {% endfor %}
                 </div>
             </div>
             {% endfor %}
@@ -33,12 +52,52 @@
     </div>
 </div>
 
+<style>
+    .api-key-card {
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 20px;
+        margin-bottom: 20px;
+    }
+    .api-key-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 16px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        padding-bottom: 12px;
+    }
+    .api-input-group {
+        margin-bottom: 12px;
+    }
+    .api-input-group label {
+        display: block;
+        font-size: 0.75rem;
+        font-weight: 600;
+        color: var(--text-muted);
+        margin-bottom: 6px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    .api-input-row {
+        display: flex;
+        gap: 10px;
+    }
+    .api-input-row input {
+        flex: 1;
+    }
+    .btn-success {
+        background: var(--green) !important;
+        border-color: var(--green) !important;
+    }
+</style>
 {% endblock %}
 
 {% block extra_scripts %}
 <script>
-    async function saveKey(moduleName) {
-        const inputId = 'key-' + moduleName.replace(/ /g, '-');
+    async function saveKey(moduleName, displayName, backendKeyName) {
+        const inputId = 'key-' + moduleName.replace(/ /g, '-') + '-' + displayName;
         const input = document.getElementById(inputId);
         const key = input.value;
 
@@ -48,11 +107,23 @@
             const res = await fetch('/api/settings/modules/' + encodeURIComponent(moduleName) + '/key', {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ api_key: key }),
+                body: JSON.stringify({ 
+                    key_name: backendKeyName,
+                    key_value: key 
+                }),
             });
             if (res.ok) {
                 input.value = '••••••••';
                 input.type = 'password';
+                // Show a brief success state
+                const btn = input.nextElementSibling;
+                const originalText = btn.textContent;
+                btn.textContent = 'Saved!';
+                btn.classList.add('btn-success');
+                setTimeout(() => {
+                    btn.textContent = originalText;
+                    btn.classList.remove('btn-success');
+                }, 2000);
             } else {
                 alert('Failed to save key');
             }

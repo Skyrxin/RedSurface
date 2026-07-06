@@ -38,6 +38,7 @@ results/
 *.log
 _legacy/
 data/*.db
+data/.wmn_cache/
 
 # OS
 .DS_Store
@@ -52,4 +53,4 @@ project_dev/
 
 
 #Gemini-CLI
-.geminiignore
+

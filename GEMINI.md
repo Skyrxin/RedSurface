@@ -80,18 +80,15 @@ To add a new plugin:
 *   **Code Style:** Write clean, modular Python. Always use type hinting. Ensure all new plugins strictly adhere to the `PluginBase` structure and return properly formatted `PluginResult` objects.
 
 ## Current Focus & Active Tasks
-- [x] **Task:** Fix OSINT profile discovery and implement Hybrid API/Scraping approach.
-- [x] **Task:** Implement Smart OSINT Enrichment (OG Tag parsing and Metadata extraction).
-- [x] **Task:** Fix UI duplication by transitioning plugins to `per_value_metadata`.
-- [x] **Task:** Restore rich metadata rendering in UI for `per_value_metadata` results.
-- [x] **Task:** Implement "Full Username OSINT" via the `Username Web Discovery` plugin.
-- [x] **Task:** Implement "Smart Full Name OSINT" via the `Web Profile Discovery` plugin.
-- [x] **Task:** Create reusable native scan test runner in `gemini_modules/`.
+- [x] **Task:** Revitalize Free Person OSINT discovery (LinkedIn, GitHub, etc. without API keys).
+- [x] **Task:** Implement Contact Extraction (Emails/Phones from search snippets).
+- [x] **Task:** Fix UI Desynchronization and Rendering gaps.
 - [x] **Task:** Implement Async Database Migration (Optimization Plan 1).
 - [x] **Task:** Implement Bulk Database Inserts (Optimization Plan 2).
 - [x] **Task:** Implement Concurrency Limits (Optimization Plan 3).
 - [x] **Task:** Implement Real-time Communication (Optimization Plan 4).
-- [ ] **Task:** Implement a formal test suite (moved from TODOs).
+- [x] **Task:** Implement Graph Payload Optimization (Optimization Plan 5).
+- [x] **Task:** Implement a formal test suite (Optimization Plan 6).
 - [ ] **Task:** Refine error handling for HTTP timeouts in async plugins.
 
 ## Anti-Patterns & Lessons Learned (Error Log)
@@ -109,5 +106,9 @@ To add a new plugin:
 - **Solution:** This causes the `ScanEngine` to replicate the entire list across every result row in the database, leading to massive UI duplication. Use `per_value_metadata` to align specific context with specific values.
 - **Mistake:** UI template only looking at global metadata keys (e.g., `'profiles'`) after backend transitioned to `per_value_metadata`.
 - **Solution:** Update Jinja templates to check both global and per-row metadata fields to ensure rich designs are preserved during architectural shifts.
-- **Mistake:** Relying on fragile HTML scrapers for major search engines (Google/DDG) without robust fallback or API integration.
+- **Mistake:** Relying on fragile HTML scrapers for major search engines without robust fallback or API integration.
 - **Solution:** Use the Hybrid API approach (e.g., Google CSE) and resilient link extraction patterns as implemented in the Smart OSINT fix.
+- **Mistake:** Using strict regex based on CSS classes (which change frequently) for search engine scraping.
+- **Solution:** Use class-agnostic, broad anchor-tag extraction and rely on URL matching and content scoring for platform identification.
+- **Mistake:** Triggering UI reloads or updates before database transactions are fully committed.
+- **Solution:** Broadcast real-time events (like `results_found`) only after successful DB commits to ensure the frontend always sees the latest data state.

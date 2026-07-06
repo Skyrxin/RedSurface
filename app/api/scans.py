@@ -24,18 +24,23 @@ class ScanCreate(BaseModel):
     target: str
     target_type: str = "domain"  # domain | email | username | person
     mode: str = "passive"  # passive | active
-    modules: list[str] = []  # Empty = all enabled modules
+    modules: List[str] = []  # Empty = all enabled modules
+    config: Optional[Dict[str, Any]] = {}
 
 
 @router.post("/scans", status_code=201)
 async def create_scan(scan_in: ScanCreate, db: AsyncSession = Depends(get_db)):
     """Create a new scan and start it immediately."""
+    # Merge modules into the config dictionary
+    scan_config = scan_in.config or {}
+    scan_config["modules"] = scan_in.modules
+    
     scan = Scan(
         name=scan_in.name,
         target=scan_in.target,
         target_type=scan_in.target_type,
         mode=scan_in.mode,
-        config={"modules": scan_in.modules},
+        config=scan_config,
     )
     db.add(scan)
     await db.commit()
@@ -195,10 +200,6 @@ async def get_scan_graph(
 ):
     """
     Get graph data for D3.js visualization with server-side node aggregation.
-    
-    Args:
-        scan_id: Database ID of the scan.
-        threshold: Max results before aggregation kicks in for a specific type.
     """
     result = await db.execute(select(Scan).filter(Scan.id == scan_id))
     scan = result.scalars().first()

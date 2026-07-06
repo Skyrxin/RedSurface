@@ -4,6 +4,7 @@ Collects email addresses and employee data from multiple public sources.
 """
 
 import asyncio
+import base64
 import re
 import html
 import urllib.parse
@@ -113,6 +114,56 @@ class OSINTCollector:
         "{first}.{l}",              # john.d
         "{last}",                   # doe
         "{f}{l}",                   # jd
+    ]
+
+    # Default browser-like User-Agent for scraping endpoints
+    DEFAULT_UA = (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    )
+
+    # Rotated to reduce throttling on search-engine scrapers.
+    USER_AGENTS = [
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0",
+    ]
+
+    def _random_ua(self) -> str:
+        import random
+        return random.choice(self.USER_AGENTS)
+
+    # URL fragment -> platform label (first match wins)
+    PLATFORM_MAP = [
+        ("linkedin.com", "LinkedIn"), ("github.com", "GitHub"), ("gitlab.com", "GitLab"),
+        ("x.com", "Twitter"), ("twitter.com", "Twitter"), ("instagram.com", "Instagram"),
+        ("facebook.com", "Facebook"), ("tiktok.com", "TikTok"), ("youtube.com", "YouTube"),
+        ("reddit.com", "Reddit"), ("medium.com", "Medium"), ("dev.to", "Dev.to"),
+        ("t.me", "Telegram"), ("keybase.io", "Keybase"), ("about.me", "About.me"),
+        ("pinterest.com", "Pinterest"), ("wikipedia.org", "Wikipedia"),
+        ("stackoverflow.com", "StackOverflow"), ("mastodon", "Mastodon"),
+    ]
+
+    # Platforms with reliable, key-free existence semantics for username enumeration.
+    # (label, probe_url, profile_url_or_None, mode, marker_or_None)
+    #   mode: "status"       -> HTTP 200 means exists (clean 404 on missing)
+    #         "reddit"       -> 200 + JSON has 'data' and no 'error'
+    #         "json_not_null"-> 200 and body is not literal 'null'
+    #         "keybase"      -> API status.code == 0 and 'them' populated
+    #         "contains"     -> 200 and marker text present in body
+    PERSON_USERNAME_CHECKS = [
+        ("GitHub",     "https://api.github.com/users/{u}",            "https://github.com/{u}",             "status",        None),
+        ("GitLab",     "https://gitlab.com/{u}",                       None,                                "status",        None),
+        ("Reddit",     "https://www.reddit.com/user/{u}/about.json",   "https://www.reddit.com/user/{u}",   "reddit",        None),
+        ("Dev.to",     "https://dev.to/{u}",                           None,                                "status",        None),
+        ("Medium",     "https://medium.com/@{u}",                      None,                                "status",        None),
+        ("About.me",   "https://about.me/{u}",                         None,                                "status",        None),
+        ("Pastebin",   "https://pastebin.com/u/{u}",                   None,                                "status",        None),
+        ("HackerNews", "https://hacker-news.firebaseio.com/v0/user/{u}.json", "https://news.ycombinator.com/user?id={u}", "json_not_null", None),
+        ("Keybase",    "https://keybase.io/_/api/1.0/user/lookup.json?usernames={u}", "https://keybase.io/{u}", "keybase",   None),
+        ("Telegram",   "https://t.me/{u}",                             None,                                "contains",      "tgme_page_title"),
+        ("Substack",   "https://{u}.substack.com",                     None,                                "status",        None),
     ]
 
     def __init__(
@@ -891,6 +942,503 @@ class OSINTCollector:
                     seen_urls.add(normalized_url)
                     
         return sorted(profiles, key=lambda x: x['match_quality'], reverse=True)
+
+    # ------------------------------------------------------------------ #
+    #  Key-free person discovery (username enumeration + DDG Lite search) #
+    # ------------------------------------------------------------------ #
+
+    _DDG_LITE_RE = re.compile(
+        r'<a[^>]*href="([^"]+)"[^>]*class=[\'"]result-link[\'"][^>]*>(.*?)</a>',
+        re.DOTALL | re.IGNORECASE,
+    )
+    # html.duckduckgo.com markup: <a ... class="result__a" href="...">title</a>
+    _DDG_HTML_RE = re.compile(
+        r'<a[^>]*class=[\'"]result__a[\'"][^>]*href="([^"]+)"[^>]*>(.*?)</a>',
+        re.DOTALL | re.IGNORECASE,
+    )
+
+    def _classify_platform(self, url: str) -> str:
+        """Map a URL to a known platform label, or 'Web'."""
+        u = (url or "").lower()
+        for frag, label in self.PLATFORM_MAP:
+            if frag in u:
+                return label
+        return "Web"
+
+    def _generate_username_candidates(self, name: str, deep_scan: bool = False) -> List[str]:
+        """
+        Derive likely social-media usernames from a person's name.
+        Focuses on compound handles (first+last variants) which have low
+        collision rates, avoiding noisy single-token guesses.
+        """
+        tokens = [re.sub(r'[^a-z0-9]', '', t.lower()) for t in re.split(r'\s+', name.strip())]
+        tokens = [t for t in tokens if t]
+        if not tokens:
+            return []
+
+        if len(tokens) == 1:
+            base = tokens[0]
+            cands = [base, f"{base}1", f"real{base}", f"{base}official"]
+        else:
+            first, last = tokens[0], tokens[-1]
+            cands = [
+                f"{first}{last}",
+                f"{first}.{last}",
+                f"{first}_{last}",
+                f"{first}-{last}",
+                f"{first[0]}{last}",
+                f"{first}{last[0]}",
+                f"{last}{first}",
+                f"{first[0]}.{last}",
+                f"{last}.{first}",
+            ]
+            if deep_scan:
+                cands += [f"{first[0]}_{last}", f"{first}{last}1", f"{last}_{first}"]
+
+        seen, out = set(), []
+        for c in cands:
+            if c and 2 <= len(c) <= 39 and c not in seen:
+                seen.add(c)
+                out.append(c)
+        return out
+
+    async def search_ddg_lite(self, query: str, max_results: int = 20) -> List[Dict[str, Any]]:
+        """
+        Reliable, key-free web search via DuckDuckGo Lite (POST form).
+        More robust than scraping Google/Bing which block datacenter IPs.
+        Returns raw {url, title} dicts.
+        """
+        results: List[Dict[str, Any]] = []
+        endpoints = ["https://lite.duckduckgo.com/lite/", "https://html.duckduckgo.com/html/"]
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True) as client:
+                # Rotate endpoint + UA across attempts; DDG returns HTTP 202 when it
+                # throttles, so retry on non-200 before giving up.
+                for attempt, endpoint in enumerate(endpoints):
+                    headers = {
+                        "User-Agent": self._random_ua(),
+                        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                        "Content-Type": "application/x-www-form-urlencoded",
+                        "Referer": "https://duckduckgo.com/",
+                    }
+                    try:
+                        resp = await client.post(endpoint, data={"q": query}, headers=headers)
+                    except Exception:
+                        continue
+                    if resp.status_code != 200:
+                        self.logger.debug(f"DDG ({endpoint}) status {resp.status_code}")
+                        await asyncio.sleep(0.6)
+                        continue
+                    # lite/ uses class='result-link'; html/ uses class="result__a".
+                    matches = self._DDG_LITE_RE.findall(resp.text) or self._DDG_HTML_RE.findall(resp.text)
+                    for raw_url, raw_title in matches[:max_results]:
+                        url = html.unescape(raw_url).strip()
+                        if "uddg=" in url:
+                            url = urllib.parse.unquote(url.split("uddg=")[1].split("&")[0])
+                        if not url.startswith("http") or "duckduckgo.com" in url:
+                            continue
+                        title = re.sub(r'<.*?>', '', html.unescape(raw_title)).strip()
+                        results.append({"url": url, "title": title})
+                    if results:
+                        break
+        except Exception as e:
+            self.logger.debug(f"DDG Lite search failed: {e}")
+        return results
+
+    _BING_ANCHOR_RE = re.compile(
+        r'<h2[^>]*>\s*<a\s+[^>]*?href="(https?://[^"]+)"[^>]*>(.*?)</a>',
+        re.DOTALL | re.IGNORECASE,
+    )
+
+    def _decode_bing_url(self, href: str) -> Optional[str]:
+        """Resolve a Bing result href (which is usually a /ck/a redirect) to the real URL."""
+        href = html.unescape(href or "")
+        if "bing.com/ck/a" in href:
+            m = re.search(r'[?&]u=a1([^&]+)', href)
+            if not m:
+                return None
+            token = m.group(1)
+            try:
+                return base64.urlsafe_b64decode(token + "=" * (-len(token) % 4)).decode("utf-8", "ignore")
+            except Exception:
+                return None
+        if href.startswith("http") and "bing.com" not in href:
+            return href
+        return None
+
+    async def search_bing_web(self, query: str, max_results: int = 15) -> List[Dict[str, Any]]:
+        """
+        Key-free web search via Bing. Bing serves full result pages to a browser
+        UA + language cookie and is a reliable fallback when DuckDuckGo throttles.
+        """
+        results: List[Dict[str, Any]] = []
+        headers = {
+            "User-Agent": self._random_ua(),
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Cookie": "SRCHHPGUSR=SRCHLANG=en",
+        }
+        try:
+            url = f"https://www.bing.com/search?q={urllib.parse.quote(query)}&setlang=en&cc=us"
+            async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True) as client:
+                resp = await client.get(url, headers=headers)
+                if resp.status_code == 200:
+                    seen = set()
+                    for href, raw_title in self._BING_ANCHOR_RE.findall(resp.text):
+                        real = self._decode_bing_url(href)
+                        if not real:
+                            continue
+                        key = real.rstrip("/").lower()
+                        if key in seen:
+                            continue
+                        seen.add(key)
+                        title = re.sub(r'<.*?>', '', html.unescape(raw_title)).strip()
+                        results.append({"url": real, "title": title})
+                        if len(results) >= max_results:
+                            break
+                else:
+                    self.logger.debug(f"Bing returned status {resp.status_code}")
+        except Exception as e:
+            self.logger.debug(f"Bing search failed: {e}")
+        return results
+
+    async def web_search(self, query: str, max_results: int = 15) -> List[Dict[str, Any]]:
+        """
+        Resilient multi-engine web search. Queries DuckDuckGo Lite and Bing in
+        parallel and merges — if one engine throttles (HTTP 202 / captcha), the
+        other still returns results.
+        """
+        engines = [
+            self.search_ddg_lite(query, max_results=max_results),
+            self.search_bing_web(query, max_results=max_results),
+        ]
+        merged: List[Dict[str, Any]] = []
+        seen: Set[str] = set()
+        for batch in await asyncio.gather(*engines, return_exceptions=True):
+            if isinstance(batch, list):
+                for r in batch:
+                    key = r["url"].rstrip("/").lower()
+                    if key not in seen:
+                        seen.add(key)
+                        merged.append(r)
+        return merged
+
+    @staticmethod
+    def _name_tokens(name: str) -> List[str]:
+        """Significant lowercase tokens of a name (length >= 3)."""
+        return [t for t in re.split(r'\W+', (name or "").lower()) if len(t) >= 3]
+
+    def _is_name_relevant(self, name: str, *texts: str) -> bool:
+        """True if any significant name token appears in any of the given texts."""
+        tokens = self._name_tokens(name)
+        if not tokens:
+            return False
+        blob = " ".join(t for t in texts if t).lower()
+        return any(tok in blob for tok in tokens)
+
+    async def enumerate_person_usernames(self, name: str, deep_scan: bool = False) -> List[Dict[str, Any]]:
+        """
+        Directly probe platforms for existence of usernames derived from `name`.
+        This is the reliable, API-key-free backbone of person discovery.
+        Returns list of {platform, url, username} for confirmed profiles.
+        """
+        candidates = self._generate_username_candidates(name, deep_scan=deep_scan)
+        if not candidates:
+            return []
+        if not deep_scan:
+            candidates = candidates[:6]
+
+        headers = {
+            "User-Agent": self.DEFAULT_UA,
+            "Accept": "text/html,application/xhtml+xml,application/json,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+        }
+        if self.github_token:
+            gh_headers = dict(headers, Authorization=f"token {self.github_token}")
+        else:
+            gh_headers = headers
+
+        sem = asyncio.Semaphore(15)
+        found: List[Dict[str, Any]] = []
+        seen: Set[str] = set()
+
+        async def probe(client, label, probe_tpl, profile_tpl, mode, marker, username):
+            async with sem:
+                probe_url = probe_tpl.format(u=username)
+                try:
+                    h = gh_headers if label == "GitHub" else headers
+                    resp = await client.get(probe_url, headers=h, follow_redirects=True, timeout=12.0)
+                except Exception:
+                    return None
+
+                exists = False
+                if mode == "status":
+                    exists = resp.status_code == 200
+                elif mode == "reddit":
+                    if resp.status_code == 200:
+                        try:
+                            d = resp.json()
+                            exists = bool(d.get("data")) and not d.get("error")
+                        except Exception:
+                            exists = False
+                elif mode == "json_not_null":
+                    exists = resp.status_code == 200 and resp.text.strip().lower() not in ("null", "")
+                elif mode == "keybase":
+                    try:
+                        d = resp.json()
+                        them = d.get("them")
+                        # Keybase returns code 0 with them=[null] for missing users
+                        exists = (
+                            d.get("status", {}).get("code") == 0
+                            and isinstance(them, list)
+                            and len(them) > 0
+                            and them[0] is not None
+                        )
+                    except Exception:
+                        exists = False
+                elif mode == "contains":
+                    exists = resp.status_code == 200 and bool(marker) and marker in resp.text
+
+                if not exists:
+                    return None
+                profile_url = (profile_tpl or probe_tpl).format(u=username)
+                return {"platform": label, "url": profile_url, "username": username}
+
+        async with httpx.AsyncClient() as client:
+            tasks = [
+                probe(client, *check, username)
+                for check in self.PERSON_USERNAME_CHECKS
+                for username in candidates
+            ]
+            for res in await asyncio.gather(*tasks, return_exceptions=True):
+                if isinstance(res, dict):
+                    key = res["url"].rstrip("/").lower()
+                    if key not in seen:
+                        seen.add(key)
+                        found.append(res)
+        return found
+
+    # Confidence tiers assigned to every discovered profile.
+    TIER_CONFIRMED = "Confirmed"   # independently corroborated (search / name in bio)
+    TIER_LIKELY = "Likely"         # cross-platform consistency or exact full-name handle
+    TIER_CANDIDATE = "Candidate"   # single bare existence hit — verify manually
+
+    async def discover_person(self, name: str, deep_scan: bool = False) -> Dict[str, Any]:
+        """
+        Orchestrated, key-free discovery of a person's public profiles.
+
+        Primary signal: direct username enumeration across ~600 sites (WhatsMyName)
+        for handles derived from the name — reliable and high-yield.
+        Secondary signal: multi-engine web search (LinkedIn/Facebook/etc.) + GitHub API.
+
+        Returns {"profiles": [...], "summary": {...}}. Every profile carries a
+        `confidence` label and `match_quality` score; nothing is silently dropped.
+        """
+        if self._check_loop_prevention(name, "person_discovery"):
+            self.logger.warning(f"Loop prevention active for person discovery: {name}")
+            return {"profiles": [], "summary": {"loop_prevention": True}}
+
+        candidates = self._generate_username_candidates(name, deep_scan=deep_scan)
+        profiles: List[Dict[str, Any]] = []
+
+        # ---- 1. Username enumeration across the WhatsMyName catalogue ---------
+        sites_checked = 0
+        enum_errored = 0
+        try:
+            from modules.social_enum import SocialEnumerator
+            # Fast defaults (concurrency 100, split connect/read timeout, retry). A
+            # separate enumerator per candidate lets them run concurrently while each
+            # keeps its own reliability telemetry.
+            full_sites = SocialEnumerator().load_sites(
+                include_protected=deep_scan, include_nsfw=deep_scan)
+            social_sites = SocialEnumerator().load_sites(
+                categories=["social", "coding", "business", "dating"])
+            sites_checked = len(full_sites)
+
+            primary = candidates[:1]
+            secondary = candidates[1:(4 if deep_scan else 3)]
+            enumerators = []
+
+            def _enum(cand, site_list):
+                en = SocialEnumerator()
+                enumerators.append(en)
+                return en.check_username(cand, sites=site_list)
+
+            enum_tasks = [_enum(primary[0], full_sites)] if primary else []
+            enum_tasks += [_enum(c, social_sites) for c in secondary]
+
+            batches = await asyncio.gather(*enum_tasks, return_exceptions=True)
+            enum_errored = sum(en.last_stats.get("errored", 0) for en in enumerators)
+            for batch in batches:
+                if isinstance(batch, list):
+                    for hit in batch:
+                        profiles.append({
+                            "url": hit["url"],
+                            "platform": hit["platform"],
+                            "category": hit.get("category", ""),
+                            "title": f"{hit['platform']}: @{hit['username']}",
+                            "snippet": f"Account exists for handle '{hit['username']}'.",
+                            "match_quality": 55,
+                            "discovery": "username_enum",
+                            "username": hit["username"],
+                        })
+        except Exception as e:
+            self.logger.debug(f"username enumeration failed: {e}")
+
+        # ---- 2. Multi-engine web search (LinkedIn/Facebook/Instagram/X) -------
+        engines_used = "duckduckgo+bing"
+        queries = [
+            f'"{name}" (linkedin OR github OR twitter OR instagram OR facebook OR tiktok)',
+            f'"{name}" linkedin',
+            f'"{name}" profile',
+        ]
+        if deep_scan:
+            queries.append(f'"{name}"')
+        try:
+            batches = await asyncio.gather(*[self.web_search(q) for q in queries])
+            seen_search = set()
+            for batch in batches:
+                for r in batch:
+                    title, url = r.get("title", ""), r.get("url", "")
+                    key = url.rstrip("/").lower()
+                    if key in seen_search:
+                        continue
+                    # Spam gate: a genuine result mentions the name in its title or URL.
+                    if not self._is_name_relevant(name, title, url):
+                        continue
+                    seen_search.add(key)
+                    plat = self._classify_platform(url)
+                    score = self._calculate_match_quality(name, title)
+                    profiles.append({
+                        "url": url,
+                        "platform": plat,
+                        "title": title or plat,
+                        "snippet": "Discovered via web search.",
+                        "match_quality": max(score, 60) if plat != "Web" else max(score, 45),
+                        "discovery": "search",
+                    })
+        except Exception as e:
+            self.logger.debug(f"web search discovery failed: {e}")
+
+        # ---- 3. GitHub name API (rich name/bio context) ----------------------
+        try:
+            profiles.extend(await self.search_github_by_name(name))
+        except Exception as e:
+            self.logger.debug(f"GitHub name search failed: {e}")
+
+        # ---- Merge duplicates by URL, keeping the best-scoring entry ----------
+        best: Dict[str, Dict[str, Any]] = {}
+        for p in profiles:
+            url = (p.get("url") or "").strip()
+            if not url:
+                continue
+            key = url.rstrip("/").lower()
+            if key not in best or p.get("match_quality", 0) > best[key].get("match_quality", 0):
+                best[key] = p
+        merged = list(best.values())
+
+        # ---- Enrich strongest candidates with OG-tag metadata ----------------
+        merged.sort(key=lambda x: x.get("match_quality", 0), reverse=True)
+
+        async def enrich(p):
+            try:
+                meta = await self.fetch_profile_metadata(p["url"], p.get("platform", "Web"))
+                if meta.get("title"):
+                    p["title"] = meta["title"]
+                if meta.get("description"):
+                    p["snippet"] = meta["description"]
+                # Independent name corroboration only counts for search-discovered
+                # pages (an enum page usually just echoes the derived handle).
+                if p.get("discovery") == "search" and self._is_name_relevant(
+                    name, meta.get("title", ""), meta.get("description", "")
+                ):
+                    p["name_in_content"] = True
+            except Exception:
+                pass
+            return p
+
+        await asyncio.gather(*[enrich(p) for p in merged[:(30 if deep_scan else 20)]])
+
+        # ---- Assign confidence tiers (never drop) ----------------------------
+        def _handle_of(url: str) -> str:
+            path = url.lower().split("?")[0].rstrip("/")
+            segs = [s for s in re.split(r'[/@]', path) if s and "." not in s]
+            return segs[-1] if segs else ""
+
+        search_handles = {_handle_of(p["url"]) for p in merged if p.get("discovery") == "search"}
+        search_handles.discard("")
+        # Exact URLs a search engine independently surfaced (strong corroboration).
+        search_urls = {p["url"].rstrip("/").lower() for p in merged if p.get("discovery") == "search"}
+        # Cross-platform consistency: handles seen on multiple enum platforms.
+        handle_counts: Dict[str, int] = {}
+        for p in merged:
+            if p.get("discovery") == "username_enum":
+                handle_counts[p["username"].lower()] = handle_counts.get(p["username"].lower(), 0) + 1
+
+        tokens = self._name_tokens(name)
+        exact_handles = set()
+        if len(tokens) >= 2:
+            f, l = tokens[0], tokens[-1]
+            exact_handles = {f + l, f"{f}.{l}", f"{f}_{l}", f"{f}-{l}"}
+
+        for p in merged:
+            disc = p.get("discovery")
+            handle = (p.get("username") or "").lower()
+            if disc == "search":
+                if p.get("name_in_content") or self._is_name_relevant(name, p.get("title", "")):
+                    tier, score = self.TIER_CONFIRMED, max(p.get("match_quality", 0), 90)
+                else:
+                    tier, score = self.TIER_LIKELY, max(p.get("match_quality", 0), 70)
+            elif disc == "github_name" or p.get("platform") == "GitHub" and disc != "username_enum":
+                tier, score = self.TIER_LIKELY, max(p.get("match_quality", 0), 70)
+            else:  # username_enum
+                # Confirmed only when a search engine surfaced this *exact* profile
+                # URL — a matching handle slug elsewhere is weaker (→ Likely).
+                if p["url"].rstrip("/").lower() in search_urls:
+                    tier, score = self.TIER_CONFIRMED, 92
+                elif (
+                    handle in search_handles
+                    or handle_counts.get(handle, 0) >= 2
+                    or handle in exact_handles
+                ):
+                    tier, score = self.TIER_LIKELY, 75
+                else:
+                    tier, score = self.TIER_CANDIDATE, 55
+            p["confidence"] = tier
+            p["match_quality"] = score
+
+        # ---- Rank: Confirmed > Likely > Candidate, socials first -------------
+        tier_rank = {self.TIER_CONFIRMED: 3, self.TIER_LIKELY: 2, self.TIER_CANDIDATE: 1}
+        SOCIAL_CATS = {"social", "coding", "business", "dating", "images", "video", "music"}
+
+        def is_social(p):
+            return (
+                p.get("category", "") in SOCIAL_CATS
+                or self._classify_platform(p.get("url", "")) != "Web"
+            )
+
+        merged.sort(
+            key=lambda x: (tier_rank.get(x.get("confidence"), 0), is_social(x), x.get("match_quality", 0)),
+            reverse=True,
+        )
+
+        counts = {
+            self.TIER_CONFIRMED: sum(1 for p in merged if p.get("confidence") == self.TIER_CONFIRMED),
+            self.TIER_LIKELY: sum(1 for p in merged if p.get("confidence") == self.TIER_LIKELY),
+            self.TIER_CANDIDATE: sum(1 for p in merged if p.get("confidence") == self.TIER_CANDIDATE),
+        }
+        summary = {
+            "total": len(merged),
+            "confirmed": counts[self.TIER_CONFIRMED],
+            "likely": counts[self.TIER_LIKELY],
+            "candidate": counts[self.TIER_CANDIDATE],
+            "platforms": len({p.get("platform") for p in merged}),
+            "sites_checked": sites_checked,
+            "sites_errored": enum_errored,
+            "candidates_tried": candidates,
+            "engines": engines_used,
+        }
+        return {"profiles": merged, "summary": summary}
 
     async def search_google_custom_search(self, query_string: str, is_raw_query: bool = False) -> List[Dict[str, Any]]:
         """

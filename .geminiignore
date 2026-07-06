@@ -1,0 +1,6 @@
+__pycache__/
+.venv/
+_legacy/
+project_dev/
+.gitignore
+
