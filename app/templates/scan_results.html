@@ -175,7 +175,7 @@
 {% endblock %}
 
 {% block extra_scripts %}
-<script src="/static/js/graph.js?v=2.1"></script>
+<script src="/static/js/graph.js?v=2.2"></script>
 <script>
     {% if scan.status == 'running' %}
     initScanWebSocket({{ scan.id }});
@@ -196,6 +196,10 @@
     // Always initialize once the scan is finished so the loading placeholder is
     // replaced — initAttackGraph() renders an empty-state when there are no results.
     document.addEventListener('DOMContentLoaded', function () {
+        // Defensively drop the "Constructing neural graph..." placeholder here too,
+        // so a stale/cached graph.js can never leave it overlaid on a finished scan.
+        var _gl = document.querySelector('#attack-graph .graph-loading');
+        if (_gl) _gl.remove();
         initAttackGraph('attack-graph', {{ scan.id }});
     });
     {% endif %}

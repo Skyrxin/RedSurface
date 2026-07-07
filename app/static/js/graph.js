@@ -49,6 +49,10 @@ class AttackSurfaceGraph {
     }
 
     init() {
+        // Clear the "Constructing neural graph..." loading placeholder (and any
+        // prior render) before drawing — otherwise it stays overlaid on the graph.
+        this.container.innerHTML = '';
+
         // Create SVG
         this.svg = d3.select(this.container)
             .append('svg')
